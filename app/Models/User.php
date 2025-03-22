@@ -37,13 +37,42 @@ class User extends Authenticatable
     /**
      * Get the attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+    ];
+
+    /**
+     * Get the learning sessions for the user.
+     */
+    public function learningSessions()
     {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
+        return $this->hasMany(LearningSession::class);
+    }
+
+    /**
+     * Get the chat messages for the user.
+     */
+    public function chatMessages()
+    {
+        return $this->hasMany(ChatMessage::class);
+    }
+
+    /**
+     * Get the code snippets for the user.
+     */
+    public function codeSnippets()
+    {
+        return $this->hasMany(CodeSnippet::class);
+    }
+
+    /**
+     * Get the progress records for the user.
+     */
+    public function progress()
+    {
+        return $this->hasMany(UserProgress::class);
     }
 }

@@ -22,7 +22,7 @@ class TutorService
     /**
      * Get a response from the AI tutor
      */
-    public function getResponse($conversationHistory, $question, $preferences, $topic = null)
+    public function getResponse($question, $conversationHistory, $preferences, $topic = null)
     {
         try {
             Log::info('TutorService::getResponse - Starting request processing', [
@@ -45,7 +45,11 @@ class TutorService
                 'contents' => [
                     [
                         'role' => 'user',
-                        'parts' => [['text' => $systemPrompt]]
+                        'parts' => [
+                            [
+                                'text' => $systemPrompt
+                            ]
+                        ]
                     ]
                 ],
                 'generationConfig' => [
@@ -60,14 +64,22 @@ class TutorService
             foreach ($formattedHistory as $message) {
                 $requestBody['contents'][] = [
                     'role' => $message['role'],
-                    'parts' => [['text' => $message['content']]]
+                    'parts' => [
+                        [
+                            'text' => $message['content']
+                        ]
+                    ]
                 ];
             }
             
             // Add the current question
             $requestBody['contents'][] = [
                 'role' => 'user',
-                'parts' => [['text' => $question]]
+                'parts' => [
+                    [
+                        'text' => $question
+                    ]
+                ]
             ];
             
             Log::info('TutorService::getResponse - Sending request to Gemini API', [
@@ -75,7 +87,8 @@ class TutorService
                 'request_structure' => [
                     'content_count' => count($requestBody['contents']),
                     'maxOutputTokens' => $requestBody['generationConfig']['maxOutputTokens']
-                ]
+                ],
+                'request_body' => json_encode($requestBody, JSON_PRETTY_PRINT)
             ]);
             
             $response = Http::post($url, $requestBody);
@@ -238,7 +251,7 @@ class TutorService
     /**
      * Evaluate Java code and provide feedback
      */
-    public function evaluateCode($code, $topic = null)
+    public function evaluateCode($code, $stdout = '', $stderr = '', $topic = null)
     {
         try {
             $url = $this->apiUrl . $this->model . ':generateContent?key=' . $this->apiKey;
@@ -249,13 +262,33 @@ class TutorService
                 $prompt .= " related to the topic of {$topic}";
             }
             
-            $prompt .= ". Check for errors, suggest improvements, and evaluate its correctness and efficiency. Provide specific feedback that will help the student improve their code. Be constructive and educational in your feedback.\n\nCode to evaluate:\n```java\n{$code}\n```";
+            $prompt .= " and provide constructive feedback:\n\n```java\n{$code}\n```\n\n";
+            
+            // Include execution results if available
+            if (!empty($stdout)) {
+                $prompt .= "Code output:\n```\n{$stdout}\n```\n\n";
+            }
+            
+            if (!empty($stderr)) {
+                $prompt .= "Errors/warnings:\n```\n{$stderr}\n```\n\n";
+            }
+            
+            $prompt .= "Please provide feedback on:
+1. Code correctness
+2. Style and best practices
+3. Potential improvements
+4. Efficiency considerations
+5. Any errors or bugs you spot";
             
             $requestBody = [
                 'contents' => [
                     [
                         'role' => 'user',
-                        'parts' => [['text' => $prompt]]
+                        'parts' => [
+                            [
+                                'text' => $prompt
+                            ]
+                        ]
                     ]
                 ],
                 'generationConfig' => [

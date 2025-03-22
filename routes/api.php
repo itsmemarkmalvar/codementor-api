@@ -3,6 +3,12 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\AuthController;
+use App\Http\Controllers\API\AITutorController;
+use App\Http\Controllers\API\LearningTopicController;
+use App\Http\Controllers\API\LearningSessionController;
+use App\Http\Controllers\API\ChatMessageController;
+use App\Http\Controllers\API\UserProgressController;
+use App\Http\Controllers\API\CodeSnippetController;
 
 /*
 |--------------------------------------------------------------------------
@@ -92,15 +98,36 @@ Route::get('/test-ai', function() {
     }
 });
 
-// Tutor routes - temporarily public for testing
-Route::post('/tutor/response', [App\Http\Controllers\API\TutorController::class, 'getResponse']);
-Route::post('/tutor/execute-java', [App\Http\Controllers\API\TutorController::class, 'executeJavaCode']);
-Route::post('/tutor/evaluate-code', [App\Http\Controllers\API\TutorController::class, 'evaluateCode']);
+// AI Tutor routes - temporarily public for testing
+Route::post('/tutor/chat', [AITutorController::class, 'chat']);
+Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
+Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
+
+// Learning topics public routes
+Route::get('/topics', [LearningTopicController::class, 'index']);
+Route::get('/topics/hierarchy', [LearningTopicController::class, 'hierarchy']);
+Route::get('/topics/{id}', [LearningTopicController::class, 'show']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/logout', [AuthController::class, 'logout']);
     
-    // Other protected routes will go here
+    // Learning topics management (admin only)
+    Route::post('/topics', [LearningTopicController::class, 'store']);
+    Route::put('/topics/{id}', [LearningTopicController::class, 'update']);
+    Route::delete('/topics/{id}', [LearningTopicController::class, 'destroy']);
+    
+    // Learning sessions
+    Route::apiResource('sessions', LearningSessionController::class);
+    
+    // Chat messages
+    Route::apiResource('messages', ChatMessageController::class);
+    
+    // User progress
+    Route::get('/progress', [UserProgressController::class, 'index']);
+    Route::get('/progress/{topicId}', [UserProgressController::class, 'show']);
+    
+    // Code snippets
+    Route::apiResource('snippets', CodeSnippetController::class);
 }); 

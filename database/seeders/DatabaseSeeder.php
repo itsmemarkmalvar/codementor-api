@@ -19,5 +19,10 @@ class DatabaseSeeder extends Seeder
             'name' => 'Test User',
             'email' => 'test@example.com',
         ]);
+        
+        // Seed learning topics for the Java curriculum
+        $this->call([
+            LearningTopicSeeder::class,
+        ]);
     }
 }
