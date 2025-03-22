@@ -162,6 +162,7 @@ return [
         // Application Service Providers...
         App\Providers\AppServiceProvider::class,
         App\Providers\RouteServiceProvider::class,
+        App\Providers\AIServiceProvider::class,
     ],
 
 ];

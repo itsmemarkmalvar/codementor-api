@@ -64,3 +64,68 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+# CodeMentor API
+
+This is the backend API for the CodeMentor application, providing services for user authentication, AI tutoring, and code execution.
+
+## Setup
+
+1. Clone the repository
+2. Install dependencies:
+```bash
+composer install
+```
+3. Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+4. Generate application key:
+```bash
+php artisan key:generate
+```
+5. Set up the database:
+```bash
+php artisan migrate
+```
+6. Set up API keys:
+
+### Google Gemini API Key
+This application uses Google's Gemini AI for the tutoring functionality.
+
+To obtain a Gemini API key:
+1. Go to the [Google AI Studio](https://aistudio.google.com/)
+2. Sign in with your Google account
+3. Click on "Get API key" in the top-right corner
+4. Create a new API key
+5. Copy the API key and add it to your `.env` file:
+```
+GEMINI_API_KEY=your_api_key_here
+```
+
+## Running the application
+
+Start the development server:
+```bash
+php artisan serve
+```
+
+By default, the API will be available at http://localhost:8000.
+
+## API Routes
+
+### Authentication
+- `POST /api/register` - Register a new user
+- `POST /api/login` - Log in a user
+- `POST /api/logout` - Log out a user (requires authentication)
+- `GET /api/user` - Get current user (requires authentication)
+
+### AI Tutoring
+- `POST /api/tutor/response` - Get AI tutor response (requires authentication)
+- `POST /api/tutor/execute-java` - Execute Java code (requires authentication)
+- `POST /api/tutor/evaluate-code` - Evaluate Java code (requires authentication)
+
+## Environment Variables
+
+Important environment variables:
+- `GEMINI_API_KEY` - Google Gemini API key for AI tutoring

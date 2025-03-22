@@ -58,6 +58,45 @@ Route::get('/test-user-create', function() {
     }
 });
 
+// Testing route - remove in production
+Route::get('/test-ai', function() {
+    try {
+        $apiKey = env('GEMINI_API_KEY', '');
+        $hasKey = !empty($apiKey);
+        $maskedKey = $hasKey ? substr($apiKey, 0, 4) . '...' . substr($apiKey, -4) : 'Not Set';
+        $aiService = app()->make(\App\Services\AI\TutorService::class);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'AI API configuration check',
+            'gemini_key_exists' => $hasKey,
+            'gemini_key_masked' => $maskedKey,
+            'service_loaded' => $aiService !== null,
+            'env' => [
+                'app_env' => env('APP_ENV'),
+                'api_url_set' => !empty(env('API_URL')),
+                'frontend_url_set' => !empty(env('FRONTEND_URL'))
+            ],
+            'cors' => [
+                'allowed_origins' => config('cors.allowed_origins'),
+                'supports_credentials' => config('cors.supports_credentials'),
+                'max_age' => config('cors.max_age')
+            ]
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error checking AI configuration',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+});
+
+// Tutor routes - temporarily public for testing
+Route::post('/tutor/response', [App\Http\Controllers\API\TutorController::class, 'getResponse']);
+Route::post('/tutor/execute-java', [App\Http\Controllers\API\TutorController::class, 'executeJavaCode']);
+Route::post('/tutor/evaluate-code', [App\Http\Controllers\API\TutorController::class, 'evaluateCode']);
+
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
