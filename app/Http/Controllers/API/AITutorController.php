@@ -200,6 +200,11 @@ class AITutorController extends Controller
         $validator = Validator::make($request->all(), [
             'topic_id' => 'required|exists:learning_topics,id',
             'progress_percentage' => 'required|integer|min:0|max:100',
+            'status' => 'nullable|string|in:not_started,in_progress,completed',
+            'time_spent_minutes' => 'nullable|integer|min:0',
+            'exercises_completed' => 'nullable|integer|min:0',
+            'exercises_total' => 'nullable|integer|min:0',
+            'completed_subtopics' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -213,6 +218,76 @@ class AITutorController extends Controller
             // Use user ID 1 if not authenticated (for testing purposes)
             $userId = Auth::id() ?? 1;
             
+            // Get existing progress record if it exists
+            $progress = UserProgress::where('user_id', $userId)
+                ->where('topic_id', $request->topic_id)
+                ->first();
+                
+            // Calculate time spent by adding new time to existing time
+            $timeSpentMinutes = ($progress ? $progress->time_spent_minutes : 0) + ($request->time_spent_minutes ?? 0);
+            
+            // Update exercises progress if provided
+            $exercisesCompleted = $request->exercises_completed ?? ($progress ? $progress->exercises_completed : 0);
+            $exercisesTotal = $request->exercises_total ?? ($progress ? $progress->exercises_total : 0);
+            
+            // Handle completed subtopics
+            $completedSubtopics = [];
+            if ($progress && $progress->completed_subtopics) {
+                $completedSubtopics = json_decode($progress->completed_subtopics, true) ?? [];
+            }
+            if ($request->has('completed_subtopics') && is_array($request->completed_subtopics)) {
+                $completedSubtopics = array_unique(array_merge($completedSubtopics, $request->completed_subtopics));
+            }
+            
+            // Determine status
+            $status = $request->status;
+            if (!$status) {
+                if ($request->progress_percentage >= 100) {
+                    $status = 'completed';
+                } elseif ($request->progress_percentage > 0) {
+                    $status = 'in_progress';
+                } else {
+                    $status = 'not_started';
+                }
+            }
+            
+            // Update streak days
+            $currentStreakDays = $progress ? $progress->current_streak_days : 0;
+            $lastInteraction = $progress ? $progress->last_interaction_at : null;
+            
+            if ($lastInteraction) {
+                $lastInteractionDate = new \DateTime($lastInteraction);
+                $today = new \DateTime();
+                $diff = $lastInteractionDate->diff($today);
+                
+                if ($diff->days == 1) {
+                    // Consecutive day, increase streak
+                    $currentStreakDays++;
+                } elseif ($diff->days > 1) {
+                    // Streak broken, reset to 1
+                    $currentStreakDays = 1;
+                }
+                // If same day, don't change streak
+            } else {
+                // First time, set streak to 1
+                $currentStreakDays = 1;
+            }
+            
+            // Set completion timestamps
+            $startedAt = null;
+            $completedAt = null;
+            
+            if ($progress) {
+                $startedAt = $progress->started_at;
+                $completedAt = $progress->completed_at;
+            }
+            
+            if ($status == 'in_progress' && !$startedAt) {
+                $startedAt = now();
+            } elseif ($status == 'completed' && !$completedAt) {
+                $completedAt = now();
+            }
+            
             $progress = UserProgress::updateOrCreate(
                 [
                     'user_id' => $userId,
@@ -220,7 +295,15 @@ class AITutorController extends Controller
                 ],
                 [
                     'progress_percentage' => $request->progress_percentage,
-                    'last_updated_at' => now(),
+                    'status' => $status,
+                    'started_at' => $startedAt,
+                    'completed_at' => $completedAt,
+                    'time_spent_minutes' => $timeSpentMinutes,
+                    'exercises_completed' => $exercisesCompleted,
+                    'exercises_total' => $exercisesTotal,
+                    'completed_subtopics' => !empty($completedSubtopics) ? json_encode($completedSubtopics) : null,
+                    'current_streak_days' => $currentStreakDays,
+                    'last_interaction_at' => now(),
                 ]
             );
 
