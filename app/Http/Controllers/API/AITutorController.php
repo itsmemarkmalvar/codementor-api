@@ -197,6 +197,25 @@ class AITutorController extends Controller
      */
     public function updateProgress(Request $request)
     {
+        // Full dump of request data for deep debugging
+        Log::debug('Update Progress Request DETAILED', [
+            'all_raw' => $request->all(),
+            'json_decode_test' => json_decode($request->getContent(), true),
+            'content_type' => $request->header('Content-Type'),
+            'completed_subtopics_type' => is_array($request->completed_subtopics) ? 'array' : gettype($request->completed_subtopics),
+            'progress_data_type' => gettype($request->progress_data),
+            'progress_percentage_type' => gettype($request->progress_percentage),
+            'progress_percentage_value' => $request->progress_percentage,
+            'REQUEST_CONTENT' => $request->getContent()
+        ]);
+        
+        // Pre-process progress_percentage to ensure it's an integer
+        if ($request->has('progress_percentage')) {
+            $request->merge([
+                'progress_percentage' => intval($request->progress_percentage)
+            ]);
+        }
+        
         $validator = Validator::make($request->all(), [
             'topic_id' => 'required|exists:learning_topics,id',
             'progress_percentage' => 'required|integer|min:0|max:100',
@@ -204,13 +223,27 @@ class AITutorController extends Controller
             'time_spent_minutes' => 'nullable|integer|min:0',
             'exercises_completed' => 'nullable|integer|min:0',
             'exercises_total' => 'nullable|integer|min:0',
-            'completed_subtopics' => 'nullable|array',
+            'completed_subtopics' => 'required|string',  // Now we expect a JSON string
+            'progress_data' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
+            Log::warning('Update Progress Validation Failed DETAILED', [
+                'errors' => $validator->errors()->toArray(),
+                'received_data' => $request->all(),
+                'raw_content' => $request->getContent(),
+                'progress_percentage_value' => $request->progress_percentage,
+                'progress_percentage_type' => gettype($request->progress_percentage),
+            ]);
+            
             return response()->json([
                 'status' => 'error',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
+                'debug_info' => [
+                    'received_data' => $request->all(),
+                    'completed_subtopics_type' => is_array($request->completed_subtopics) ? 'array' : gettype($request->completed_subtopics),
+                    'progress_percentage_type' => gettype($request->progress_percentage),
+                ]
             ], 422);
         }
 
@@ -235,9 +268,22 @@ class AITutorController extends Controller
             if ($progress && $progress->completed_subtopics) {
                 $completedSubtopics = json_decode($progress->completed_subtopics, true) ?? [];
             }
-            if ($request->has('completed_subtopics') && is_array($request->completed_subtopics)) {
-                $completedSubtopics = array_unique(array_merge($completedSubtopics, $request->completed_subtopics));
+            
+            // Process the completed_subtopics as a JSON string
+            $inputSubtopics = [];
+            if ($request->has('completed_subtopics') && is_string($request->completed_subtopics)) {
+                try {
+                    $decodedSubtopics = json_decode($request->completed_subtopics, true);
+                    if (is_array($decodedSubtopics)) {
+                        $inputSubtopics = $decodedSubtopics;
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Error decoding completed_subtopics: ' . $e->getMessage());
+                }
             }
+            
+            // Merge with existing subtopics
+            $completedSubtopics = array_unique(array_merge($completedSubtopics, $inputSubtopics));
             
             // Determine status
             $status = $request->status;
@@ -288,23 +334,31 @@ class AITutorController extends Controller
                 $completedAt = now();
             }
             
+            // Prepare the update data
+            $updateData = [
+                'progress_percentage' => $request->progress_percentage,
+                'status' => $status,
+                'started_at' => $startedAt,
+                'completed_at' => $completedAt,
+                'time_spent_minutes' => $timeSpentMinutes,
+                'exercises_completed' => $exercisesCompleted,
+                'exercises_total' => $exercisesTotal,
+                'completed_subtopics' => !empty($completedSubtopics) ? json_encode($completedSubtopics) : null,
+                'current_streak_days' => $currentStreakDays,
+                'last_interaction_at' => now(),
+            ];
+            
+            // Add progress_data if provided
+            if ($request->has('progress_data')) {
+                $updateData['progress_data'] = $request->progress_data;
+            }
+            
             $progress = UserProgress::updateOrCreate(
                 [
                     'user_id' => $userId,
                     'topic_id' => $request->topic_id,
                 ],
-                [
-                    'progress_percentage' => $request->progress_percentage,
-                    'status' => $status,
-                    'started_at' => $startedAt,
-                    'completed_at' => $completedAt,
-                    'time_spent_minutes' => $timeSpentMinutes,
-                    'exercises_completed' => $exercisesCompleted,
-                    'exercises_total' => $exercisesTotal,
-                    'completed_subtopics' => !empty($completedSubtopics) ? json_encode($completedSubtopics) : null,
-                    'current_streak_days' => $currentStreakDays,
-                    'last_interaction_at' => now(),
-                ]
+                $updateData
             );
 
             return response()->json([

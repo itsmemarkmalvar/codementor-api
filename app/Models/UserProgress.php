@@ -20,6 +20,7 @@ class UserProgress extends Model
         'completed_subtopics',
         'current_streak_days',
         'last_interaction_at',
+        'progress_data',
     ];
 
     protected $casts = [
@@ -32,6 +33,7 @@ class UserProgress extends Model
         'completed_subtopics' => 'json',
         'current_streak_days' => 'integer',
         'last_interaction_at' => 'datetime',
+        'progress_data' => 'json',
     ];
 
     /**

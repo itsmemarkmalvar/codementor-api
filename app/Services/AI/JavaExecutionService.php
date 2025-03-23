@@ -143,14 +143,29 @@ class JavaExecutionService
      */
     protected function runJavaCode(string $className, string $executionDir, ?string $inputFile): array
     {
+        // Determine operating system
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        
         // Build the command with resource limits
-        $command = sprintf(
-            'cd %s && timeout %d java -Xmx%dM %s',
-            escapeshellarg($executionDir),
-            $this->maxExecutionTime,
-            $this->memoryLimit,
-            escapeshellarg($className)
-        );
+        if ($isWindows) {
+            // Windows doesn't have timeout command like Linux/Unix
+            // Use a different approach for Windows
+            $command = sprintf(
+                'cd %s && java -Xmx%dM %s',
+                escapeshellarg($executionDir),
+                $this->memoryLimit,
+                escapeshellarg($className)
+            );
+        } else {
+            // Unix/Linux command
+            $command = sprintf(
+                'cd %s && timeout %d java -Xmx%dM %s',
+                escapeshellarg($executionDir),
+                $this->maxExecutionTime,
+                $this->memoryLimit,
+                escapeshellarg($className)
+            );
+        }
         
         // Add input redirection if input file exists
         if ($inputFile && File::exists($inputFile)) {
@@ -175,8 +190,11 @@ class JavaExecutionService
             $stderr = File::get($stderrFile);
         }
         
-        // Check for timeout
-        if ($executionTime >= $this->maxExecutionTime) {
+        // Check for timeout manually on Windows
+        if ($isWindows && $executionTime >= $this->maxExecutionTime) {
+            // Force terminate if still running (Windows specific)
+            // This is a simplified approach - a more robust solution would use process management
+            shell_exec("taskkill /F /IM java.exe 2>NUL");
             $stderr = 'Execution timed out. Your code took too long to run.';
         }
         
