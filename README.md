@@ -129,3 +129,60 @@ By default, the API will be available at http://localhost:8000.
 
 Important environment variables:
 - `GEMINI_API_KEY` - Google Gemini API key for AI tutoring
+
+## Database Seeders
+
+The application includes several seeders to populate the database with sample data:
+
+### Topic Seeders
+There are two options for seeding topics:
+
+1. **TopicSeeder** - Creates basic top-level topics without a detailed hierarchy
+2. **TopicHierarchySeeder** - Creates a complete topic hierarchy with parent-child relationships
+
+### Lesson Plan Seeders
+- **LessonPlanSeeder** - Creates lesson plans, modules, and exercises for topics
+
+### Reset Seeders
+- **ResetLessonPlansSeeder** - Resets all lesson plan data to fix duplication issues
+
+## Running Seeders Properly
+
+To avoid duplication issues, follow these steps:
+
+### Fresh Installation
+```bash
+# Run full database migration
+php artisan migrate:fresh
+
+# Run basic seeders with simple topics
+php artisan db:seed
+```
+
+### Reset Lesson Plans Only
+If you need to reset lesson plans without affecting other data:
+```bash
+# Just reset lesson plans
+php artisan db:seed --class=ResetLessonPlansSeeder
+
+# Then re-seed lesson plans
+php artisan db:seed --class=LessonPlanSeeder
+```
+
+### Change Topic Structure
+To switch from simple topics to the full hierarchy:
+```bash
+# Reset the database
+php artisan migrate:fresh
+
+# Update DatabaseSeeder.php to use TopicHierarchySeeder instead of TopicSeeder
+
+# Then run the seeders
+php artisan db:seed
+```
+
+## Important Notes
+
+- Only use one topic seeder at a time to avoid duplication
+- The LessonPlanSeeder now checks for existing lesson plans to prevent duplicates
+- If you see duplicate lesson plans, use the ResetLessonPlansSeeder to clean up

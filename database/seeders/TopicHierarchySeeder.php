@@ -6,10 +6,10 @@ use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use App\Models\LearningTopic;
 
-class LearningTopicSeeder extends Seeder
+class TopicHierarchySeeder extends Seeder
 {
     /**
-     * Run the database seeds.
+     * Run the database seeds with full topic hierarchy including subtopics.
      */
     public function run(): void
     {
@@ -280,4 +280,4 @@ class LearningTopicSeeder extends Seeder
             'is_active' => true,
         ]);
     }
-}
+} 

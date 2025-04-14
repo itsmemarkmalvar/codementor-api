@@ -11,6 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Skip this migration if learning_sessions doesn't exist yet
+        if (!Schema::hasTable('learning_sessions')) {
+            return;
+        }
+        
         Schema::create('code_snippets', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id');

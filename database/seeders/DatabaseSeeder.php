@@ -20,9 +20,18 @@ class DatabaseSeeder extends Seeder
             'email' => 'test@example.com',
         ]);
         
-        // Seed learning topics for the Java curriculum
-        $this->call([
-            LearningTopicSeeder::class,
-        ]);
+        // Choose ONE approach for topic seeding - simple or hierarchical
+        
+        // OPTION 1: Simple topics only (uncomment this line)
+        $this->call(TopicSeeder::class);
+        
+        // OPTION 2: Full topic hierarchy with subtopics (comment out for now)
+        // $this->call(TopicHierarchySeeder::class);
+        
+        // Seed lesson plans after topics are created
+        $this->call(LessonPlanSeeder::class);
+        
+        // Seed advanced Java lesson plans
+        $this->call(AdvancedJavaLessonPlanSeeder::class);
     }
 }

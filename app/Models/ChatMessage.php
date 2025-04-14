@@ -9,15 +9,18 @@ class ChatMessage extends Model
 {
     protected $fillable = [
         'user_id',
-        'session_id',
-        'sender',
         'message',
-        'code_snippet',
-        'metadata',
+        'response',
+        'topic',
+        'topic_id',
+        'context',
+        'conversation_history',
+        'preferences',
     ];
 
     protected $casts = [
-        'metadata' => 'json',
+        'conversation_history' => 'json',
+        'preferences' => 'json',
     ];
 
     /**
@@ -26,13 +29,5 @@ class ChatMessage extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
-    }
-
-    /**
-     * Get the session that contains the message.
-     */
-    public function session(): BelongsTo
-    {
-        return $this->belongsTo(LearningSession::class);
     }
 }

@@ -9,6 +9,11 @@ use App\Models\ChatMessage;
 use App\Models\LearningSession;
 use App\Models\LearningTopic;
 use App\Models\UserProgress;
+use App\Models\LessonPlan;
+use App\Models\LessonModule;
+use App\Models\LessonExercise;
+use App\Models\ModuleProgress;
+use App\Models\ExerciseAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -37,6 +42,7 @@ class AITutorController extends Controller
             'question' => 'required|string',
             'conversation_history' => 'nullable|array',
             'topic_id' => 'nullable|exists:learning_topics,id',
+            'module_id' => 'nullable|exists:lesson_modules,id',
             'session_id' => 'nullable|exists:learning_sessions,id',
             'preferences' => 'nullable|array',
         ]);
@@ -55,13 +61,23 @@ class AITutorController extends Controller
                 $topic = LearningTopic::find($request->topic_id);
             }
 
+            // Get the module if provided
+            $module = null;
+            if ($request->has('module_id') && $request->module_id) {
+                $module = LessonModule::with('lessonPlan')->find($request->module_id);
+                
+                // If the module is found but no topic was specified, get the topic from the module's lesson plan
+                if ($module && !$topic && $module->lessonPlan) {
+                    $topic = $module->lessonPlan->topic;
+                }
+            }
+
             // Get or create a session if not provided
             $session = null;
             if ($request->has('session_id') && $request->session_id) {
                 $session = LearningSession::find($request->session_id);
             } else if ($topic) {
                 // Create a new session for this topic if none provided
-                // Use user ID 1 if not authenticated (for testing purposes)
                 $userId = Auth::id() ?? 1;
                 
                 $session = LearningSession::create([
@@ -72,35 +88,74 @@ class AITutorController extends Controller
                 ]);
             }
 
+            // Initialize context for the AI tutor
+            $context = [];
+            
+            // If a module is provided, track progress and add module content to context
+            if ($module) {
+                $userId = Auth::id() ?? 1;
+                
+                // Track module progress
+                $moduleProgress = ModuleProgress::firstOrCreate(
+                    [
+                        'user_id' => $userId,
+                        'module_id' => $module->id
+                    ],
+                    [
+                        'status' => 'in_progress',
+                        'started_at' => now(),
+                        'last_activity_at' => now()
+                    ]
+                );
+                
+                $moduleProgress->markAsStarted();
+                
+                // Add module content to context for the AI tutor
+                $context = [
+                    'module_title' => $module->title,
+                    'module_content' => $module->content,
+                    'examples' => $module->examples,
+                    'key_points' => $module->key_points,
+                    'teaching_strategy' => $module->teaching_strategy,
+                    'common_misconceptions' => $module->common_misconceptions
+                ];
+                
+                // Add guidance notes if they exist
+                if ($module->guidance_notes) {
+                    $context['guidance_notes'] = $module->guidance_notes;
+                }
+                
+                // Add any struggle points from previous interactions
+                if ($moduleProgress->struggle_points) {
+                    $context['struggle_points'] = $moduleProgress->struggle_points;
+                }
+            }
+
             // Get response from AI tutor
-            $response = $this->tutorService->getResponse(
+            $response = $this->tutorService->getResponseWithContext(
                 $request->question,
                 $request->conversation_history ?? [],
                 $request->preferences ?? [],
-                $topic ? $topic->title : null
+                $topic ? $topic->title : null,
+                $context
             );
 
-            // Save the user question to chat history
+            // Save the chat message with both question and response
+            $userId = Auth::id() ?? 1;
+            
+            ChatMessage::create([
+                'user_id' => $userId,
+                'message' => $request->question,
+                'response' => $response,
+                'topic' => $topic ? $topic->title : null,
+                'topic_id' => $topic ? $topic->id : null,
+                'context' => !empty($context) ? json_encode($context) : null,
+                'conversation_history' => $request->conversation_history ?? [],
+                'preferences' => $request->preferences ?? [],
+            ]);
+
+            // Update session last_activity if available
             if ($session) {
-                // Use user ID 1 if not authenticated (for testing purposes)
-                $userId = Auth::id() ?? 1;
-                
-                ChatMessage::create([
-                    'session_id' => $session->id,
-                    'user_id' => $userId,
-                    'sender' => 'user',
-                    'message' => $request->question,
-                ]);
-
-                // Save the AI response to chat history
-                ChatMessage::create([
-                    'session_id' => $session->id,
-                    'user_id' => $userId,
-                    'sender' => 'bot',
-                    'message' => $response,
-                ]);
-
-                // Update session last_activity
                 $session->update([
                     'last_activity_at' => now(),
                 ]);
@@ -133,6 +188,8 @@ class AITutorController extends Controller
             'input' => 'nullable|string',
             'session_id' => 'nullable|exists:learning_sessions,id',
             'topic_id' => 'nullable|exists:learning_topics,id',
+            'module_id' => 'nullable|exists:lesson_modules,id',
+            'exercise_id' => 'nullable|exists:lesson_exercises,id',
         ]);
 
         if ($validator->fails()) {
@@ -143,7 +200,6 @@ class AITutorController extends Controller
         }
 
         try {
-            // Use user ID 1 if not authenticated (for testing purposes)
             $userId = Auth::id() ?? 1;
             
             // Execute the code
@@ -152,14 +208,101 @@ class AITutorController extends Controller
                 $request->input ?? ''
             );
 
-            // Get AI feedback on the code if execution was successful
+            // Variables for additional context and result tracking
+            $testResults = null;
+            $isCorrect = false;
+            $score = 0;
+            $exerciseContext = [];
+
+            // If this is for a specific exercise, evaluate against test cases
+            if ($request->has('exercise_id') && $request->exercise_id) {
+                $exercise = LessonExercise::find($request->exercise_id);
+                
+                if ($exercise && $exercise->test_cases) {
+                    // Run test cases
+                    $testResults = [];
+                    $passedCount = 0;
+                    
+                    foreach ($exercise->test_cases as $index => $testCase) {
+                        $testInput = $testCase['input'] ?? '';
+                        $expectedOutput = $testCase['output'] ?? '';
+                        
+                        // Execute with test case input
+                        $testExecution = $this->javaExecutionService->executeJavaCode(
+                            $request->code,
+                            $testInput
+                        );
+                        
+                        $passed = false;
+                        if ($testExecution['success']) {
+                            // Simple string comparison - can be enhanced with more sophisticated comparison
+                            $actualOutput = trim($testExecution['stdout'] ?? '');
+                            $expectedOutput = trim($expectedOutput);
+                            $passed = $actualOutput == $expectedOutput;
+                            
+                            if ($passed) {
+                                $passedCount++;
+                            }
+                        }
+                        
+                        $testResults[] = [
+                            'test_number' => $index + 1,
+                            'input' => $testInput,
+                            'expected_output' => $expectedOutput,
+                            'actual_output' => $testExecution['stdout'] ?? '',
+                            'passed' => $passed
+                        ];
+                    }
+                    
+                    // Calculate score and correctness
+                    $totalTests = count($exercise->test_cases);
+                    $score = $totalTests > 0 ? round(($passedCount / $totalTests) * 100) : 0;
+                    $isCorrect = $score >= 100;
+                    
+                    // Add exercise context for AI feedback
+                    $exerciseContext = [
+                        'exercise_title' => $exercise->title,
+                        'exercise_instructions' => $exercise->instructions,
+                        'test_results' => $testResults,
+                        'is_correct' => $isCorrect,
+                        'score' => $score
+                    ];
+                    
+                    // Record this attempt
+                    $attemptNumber = ExerciseAttempt::getNextAttemptNumber($userId, $exercise->id);
+                    
+                    ExerciseAttempt::create([
+                        'user_id' => $userId,
+                        'exercise_id' => $exercise->id,
+                        'attempt_number' => $attemptNumber,
+                        'submitted_code' => $request->code,
+                        'is_correct' => $isCorrect,
+                        'score' => $score,
+                        'test_results' => $testResults,
+                        'time_spent_seconds' => $request->time_spent_seconds ?? 0
+                    ]);
+                }
+            }
+
+            // Get AI feedback on the code
             $aiFeedback = '';
             if ($executionResult['success']) {
-                $aiFeedback = $this->tutorService->evaluateCode(
+                // Add relevant context for the AI feedback
+                $feedbackContext = [
+                    'stdout' => $executionResult['stdout'] ?? '',
+                    'stderr' => $executionResult['stderr'] ?? '',
+                    'topic' => $request->topic_id ? LearningTopic::find($request->topic_id)->title : null,
+                    'conversation_history' => $request->conversation_history ?? []
+                ];
+                
+                // Merge with exercise context if available
+                if (!empty($exerciseContext)) {
+                    $feedbackContext = array_merge($feedbackContext, $exerciseContext);
+                }
+                
+                $aiFeedback = $this->tutorService->evaluateCodeWithContext(
                     $request->code,
-                    $executionResult['stdout'] ?? '',
-                    $executionResult['stderr'] ?? '',
-                    $request->topic_id ? LearningTopic::find($request->topic_id)->title : null
+                    $feedbackContext
                 );
             }
 
@@ -179,6 +322,9 @@ class AITutorController extends Controller
                 'status' => 'success',
                 'data' => [
                     'execution' => $executionResult,
+                    'test_results' => $testResults,
+                    'is_correct' => $isCorrect,
+                    'score' => $score,
                     'feedback' => $aiFeedback,
                 ]
             ]);

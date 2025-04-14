@@ -75,4 +75,40 @@ class User extends Authenticatable
     {
         return $this->hasMany(UserProgress::class);
     }
+
+    /**
+     * Get the quiz attempts for the user.
+     */
+    public function quizAttempts()
+    {
+        return $this->hasMany(QuizAttempt::class);
+    }
+
+    /**
+     * Get all completed quizzes for the user.
+     */
+    public function completedQuizzes()
+    {
+        return $this->quizAttempts()
+                    ->where('passed', true)
+                    ->whereNotNull('completed_at')
+                    ->with('quiz')
+                    ->get()
+                    ->pluck('quiz')
+                    ->unique('id');
+    }
+
+    /**
+     * Get best quiz attempt for a specific quiz.
+     * 
+     * @param int $quizId
+     * @return QuizAttempt|null
+     */
+    public function getBestQuizAttempt($quizId)
+    {
+        return $this->quizAttempts()
+                    ->where('quiz_id', $quizId)
+                    ->orderBy('score', 'desc')
+                    ->first();
+    }
 }

@@ -9,6 +9,8 @@ use App\Http\Controllers\API\LearningSessionController;
 use App\Http\Controllers\API\ChatMessageController;
 use App\Http\Controllers\API\UserProgressController;
 use App\Http\Controllers\API\CodeSnippetController;
+use App\Http\Controllers\API\LessonController;
+use App\Http\Controllers\API\QuizController;
 
 /*
 |--------------------------------------------------------------------------
@@ -108,6 +110,17 @@ Route::get('/topics', [LearningTopicController::class, 'index']);
 Route::get('/topics/hierarchy', [LearningTopicController::class, 'hierarchy']);
 Route::get('/topics/{id}', [LearningTopicController::class, 'show']);
 
+// Lesson plans public routes
+Route::get('/topics/lesson-plans', [LessonController::class, 'getAllLessonPlans']);
+Route::get('/topics/{topicId}/lesson-plans', [LessonController::class, 'getLessonPlans']);
+Route::get('/lesson-plans/{id}', [LessonController::class, 'getLessonPlan']);
+Route::get('/lesson-plans/{lessonPlanId}/modules', [LessonController::class, 'getLessonPlanModules']);
+Route::get('/modules/{id}', [LessonController::class, 'getModule']);
+Route::get('/lesson-modules/{moduleId}/exercises', [LessonController::class, 'getModuleExercises']);
+Route::get('/exercises/{id}', [LessonController::class, 'getExercise']);
+// Debug route for all lesson plans
+Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);
+
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
@@ -130,4 +143,25 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // Code snippets
     Route::apiResource('snippets', CodeSnippetController::class);
+    
+    // Lesson plan management
+    Route::post('/lesson-plans', [LessonController::class, 'createLessonPlan']);
+    Route::put('/lesson-plans/{id}', [LessonController::class, 'updateLessonPlan']);
+    Route::post('/modules', [LessonController::class, 'createModule']);
+    Route::put('/modules/{id}', [LessonController::class, 'updateModule']);
+    Route::post('/exercises', [LessonController::class, 'createExercise']);
+    Route::put('/exercises/{id}', [LessonController::class, 'updateExercise']);
+    
+    // User lesson progress
+    Route::get('/lesson-plans/{id}/progress', [LessonController::class, 'getUserLessonProgress']);
+    Route::post('/modules/struggle-point', [LessonController::class, 'recordStrugglePoint']);
+    Route::get('/exercises/{id}/hint', [LessonController::class, 'getNextHint']);
+    
+    // Quiz routes
+    Route::get('/quizzes/{id}', [QuizController::class, 'getQuiz']);
+    Route::get('/modules/{moduleId}/quizzes', [QuizController::class, 'getModuleQuizzes']);
+    Route::post('/quizzes/{id}/attempt', [QuizController::class, 'startQuizAttempt']);
+    Route::post('/quiz-attempts/{id}/submit', [QuizController::class, 'submitQuizAttempt']);
+    Route::get('/quiz-attempts/{id}', [QuizController::class, 'getQuizAttempt']);
+    Route::get('/users/quizzes', [QuizController::class, 'getUserQuizzes']);
 }); 

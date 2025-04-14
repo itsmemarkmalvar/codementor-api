@@ -11,19 +11,22 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Drop the old chat_messages table if it exists
+        if (Schema::hasTable('chat_messages')) {
+            Schema::drop('chat_messages');
+        }
+        
         Schema::create('chat_messages', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('user_id');
-            $table->unsignedBigInteger('session_id');
-            $table->enum('sender', ['user', 'bot']);
+            $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->text('message');
-            $table->text('code_snippet')->nullable();
-            $table->json('metadata')->nullable(); // For any additional data like tokens used, etc.
+            $table->text('response')->nullable();
+            $table->string('topic', 255)->nullable();
+            $table->unsignedBigInteger('topic_id')->nullable();
+            $table->text('context')->nullable();
+            $table->json('conversation_history')->nullable();
+            $table->json('preferences')->nullable();
             $table->timestamps();
-            
-            // Foreign keys
-            $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
-            $table->foreign('session_id')->references('id')->on('learning_sessions')->onDelete('cascade');
         });
     }
 
