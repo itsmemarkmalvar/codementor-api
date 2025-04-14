@@ -14,6 +14,7 @@ use App\Models\LessonModule;
 use App\Models\LessonExercise;
 use App\Models\ModuleProgress;
 use App\Models\ExerciseAttempt;
+use App\Models\QuizAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -518,6 +519,243 @@ class AITutorController extends Controller
                 'status' => 'error',
                 'message' => 'Error updating progress',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Analyze a user's quiz attempts and provide personalized feedback
+     */
+    public function analyzeQuizResults(Request $request)
+    {
+        try {
+            $user = Auth::user();
+            
+            // Validate the incoming request
+            $validated = $request->validate([
+                'topic_id' => 'nullable|integer',
+                'quiz_id' => 'nullable|integer',
+                'module_id' => 'nullable|integer',
+            ]);
+            
+            // Get the user's quiz attempts
+            $quizAttemptsQuery = QuizAttempt::with(['quiz.questions', 'quiz.module'])
+                ->where('user_id', $user->id)
+                ->orderBy('created_at', 'desc');
+            
+            // Apply filters if provided
+            if (isset($validated['quiz_id'])) {
+                $quizAttemptsQuery->where('quiz_id', $validated['quiz_id']);
+            }
+            
+            if (isset($validated['module_id'])) {
+                $quizAttemptsQuery->whereHas('quiz', function($query) use ($validated) {
+                    $query->where('module_id', $validated['module_id']);
+                });
+            }
+            
+            if (isset($validated['topic_id'])) {
+                $quizAttemptsQuery->whereHas('quiz.module.lessonPlan', function($query) use ($validated) {
+                    $query->where('topic_id', $validated['topic_id']);
+                });
+            }
+            
+            // Get the attempts
+            $quizAttempts = $quizAttemptsQuery->get();
+            
+            if ($quizAttempts->isEmpty()) {
+                return response()->json([
+                    'message' => 'No quiz attempts found for analysis.',
+                    'status' => 'info'
+                ]);
+            }
+            
+            // Get strengths and weaknesses data
+            $correctResponsesMap = [];
+            $incorrectResponsesMap = [];
+            $topicPerformance = [];
+            
+            foreach ($quizAttempts as $attempt) {
+                $quiz = $attempt->quiz;
+                if (!$quiz) continue;
+                
+                $questions = $quiz->questions;
+                $responses = $attempt->question_responses;
+                $correctQuestions = $attempt->correct_questions ?? [];
+                
+                foreach ($questions as $question) {
+                    $questionId = $question->id;
+                    $topicName = $quiz->module?->lessonPlan?->topic?->title ?? 'Unknown Topic';
+                    $moduleName = $quiz->module?->title ?? 'Unknown Module';
+                    $questionType = $question->type;
+                    $questionText = $question->question_text;
+                    
+                    // Initialize topic performance data
+                    if (!isset($topicPerformance[$topicName])) {
+                        $topicPerformance[$topicName] = [
+                            'correct' => 0,
+                            'total' => 0,
+                            'modules' => []
+                        ];
+                    }
+                    
+                    // Initialize module performance data
+                    if (!isset($topicPerformance[$topicName]['modules'][$moduleName])) {
+                        $topicPerformance[$topicName]['modules'][$moduleName] = [
+                            'correct' => 0,
+                            'total' => 0
+                        ];
+                    }
+                    
+                    // Track correct/incorrect responses
+                    if (in_array($questionId, $correctQuestions)) {
+                        // Correct answer
+                        if (!isset($correctResponsesMap[$questionType])) {
+                            $correctResponsesMap[$questionType] = [];
+                        }
+                        $correctResponsesMap[$questionType][] = [
+                            'question' => $questionText,
+                            'module' => $moduleName,
+                            'topic' => $topicName
+                        ];
+                        
+                        $topicPerformance[$topicName]['correct']++;
+                        $topicPerformance[$topicName]['total']++;
+                        $topicPerformance[$topicName]['modules'][$moduleName]['correct']++;
+                        $topicPerformance[$topicName]['modules'][$moduleName]['total']++;
+                    } else {
+                        // Incorrect answer
+                        if (!isset($incorrectResponsesMap[$questionType])) {
+                            $incorrectResponsesMap[$questionType] = [];
+                        }
+                        $incorrectResponsesMap[$questionType][] = [
+                            'question' => $questionText,
+                            'module' => $moduleName,
+                            'topic' => $topicName
+                        ];
+                        
+                        $topicPerformance[$topicName]['total']++;
+                        $topicPerformance[$topicName]['modules'][$moduleName]['total']++;
+                    }
+                }
+            }
+            
+            // Calculate percentages for topics
+            foreach ($topicPerformance as $topic => $data) {
+                if ($data['total'] > 0) {
+                    $topicPerformance[$topic]['percentage'] = round(($data['correct'] / $data['total']) * 100);
+                } else {
+                    $topicPerformance[$topic]['percentage'] = 0;
+                }
+                
+                // Calculate percentages for modules
+                foreach ($data['modules'] as $module => $moduleData) {
+                    if ($moduleData['total'] > 0) {
+                        $topicPerformance[$topic]['modules'][$module]['percentage'] = 
+                            round(($moduleData['correct'] / $moduleData['total']) * 100);
+                    } else {
+                        $topicPerformance[$topic]['modules'][$module]['percentage'] = 0;
+                    }
+                }
+            }
+            
+            // Identify strengths and weaknesses
+            $strengths = [];
+            $weaknesses = [];
+            
+            foreach ($topicPerformance as $topic => $data) {
+                if ($data['percentage'] >= 80) {
+                    $strengths[] = [
+                        'topic' => $topic,
+                        'percentage' => $data['percentage'],
+                        'type' => 'topic'
+                    ];
+                } elseif ($data['percentage'] <= 60) {
+                    $weaknesses[] = [
+                        'topic' => $topic,
+                        'percentage' => $data['percentage'],
+                        'type' => 'topic'
+                    ];
+                }
+                
+                foreach ($data['modules'] as $module => $moduleData) {
+                    if ($moduleData['percentage'] >= 80) {
+                        $strengths[] = [
+                            'topic' => $topic,
+                            'module' => $module,
+                            'percentage' => $moduleData['percentage'],
+                            'type' => 'module'
+                        ];
+                    } elseif ($moduleData['percentage'] <= 60) {
+                        $weaknesses[] = [
+                            'topic' => $topic,
+                            'module' => $module,
+                            'percentage' => $moduleData['percentage'],
+                            'type' => 'module'
+                        ];
+                    }
+                }
+            }
+            
+            // Generate tutor feedback using AI service
+            $promptData = [
+                'topics' => array_keys($topicPerformance),
+                'strengths' => $strengths,
+                'weaknesses' => $weaknesses,
+                'questionTypes' => [
+                    'correct' => array_keys($correctResponsesMap),
+                    'incorrect' => array_keys($incorrectResponsesMap)
+                ]
+            ];
+            
+            $tutorPrompt = "Based on the user's quiz performance, provide personalized feedback and recommendations:\n\n";
+            $tutorPrompt .= "Strengths: ";
+            if (count($strengths) > 0) {
+                foreach ($strengths as $strength) {
+                    if ($strength['type'] === 'topic') {
+                        $tutorPrompt .= "Topic: {$strength['topic']} ({$strength['percentage']}%), ";
+                    } else {
+                        $tutorPrompt .= "Module: {$strength['module']} in {$strength['topic']} ({$strength['percentage']}%), ";
+                    }
+                }
+            } else {
+                $tutorPrompt .= "None identified yet. ";
+            }
+            
+            $tutorPrompt .= "\n\nWeaknesses: ";
+            if (count($weaknesses) > 0) {
+                foreach ($weaknesses as $weakness) {
+                    if ($weakness['type'] === 'topic') {
+                        $tutorPrompt .= "Topic: {$weakness['topic']} ({$weakness['percentage']}%), ";
+                    } else {
+                        $tutorPrompt .= "Module: {$weakness['module']} in {$weakness['topic']} ({$weakness['percentage']}%), ";
+                    }
+                }
+            } else {
+                $tutorPrompt .= "None identified yet. ";
+            }
+            
+            $tutorPrompt .= "\n\nProvide a concise paragraph of feedback about their performance, followed by 3 specific improvement recommendations, and 2 strengths to build upon.";
+            
+            // Use the AI tutor service to generate feedback
+            $aiTutorService = app()->make(\App\Services\AI\TutorService::class);
+            $aiFeedback = $aiTutorService->getResponse($tutorPrompt, [], 'quiz_analysis');
+            
+            return response()->json([
+                'analysis' => [
+                    'attempt_count' => count($quizAttempts),
+                    'topic_performance' => $topicPerformance,
+                    'strengths' => $strengths,
+                    'weaknesses' => $weaknesses
+                ],
+                'feedback' => $aiFeedback,
+                'status' => 'success'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error analyzing quiz results: ' . $e->getMessage());
+            return response()->json([
+                'message' => 'Failed to analyze quiz results: ' . $e->getMessage(),
+                'status' => 'error'
             ], 500);
         }
     }

@@ -4,8 +4,11 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\LearningTopic;
+use App\Models\UserProgress;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class LearningTopicController extends Controller
 {
@@ -14,15 +17,35 @@ class LearningTopicController extends Controller
      */
     public function index()
     {
-        // Get all topics, ordered by their order field
-        $topics = LearningTopic::where('is_active', true)
-            ->orderBy('order')
-            ->get();
+        try {
+            // Get authenticated user ID if available
+            $userId = Auth::id();
             
-        return response()->json([
-            'status' => 'success',
-            'data' => $topics
-        ]);
+            // Get all topics, ordered by their order field
+            $topics = LearningTopic::where('is_active', true)
+                ->orderBy('order')
+                ->get();
+                
+            // Add lock status if user is authenticated
+            if ($userId) {
+                $topics = $topics->map(function($topic) use ($userId) {
+                    $topic->is_locked = $topic->isLockedForUser($userId);
+                    return $topic;
+                });
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $topics
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching topics: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve topics',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -64,12 +87,50 @@ class LearningTopicController extends Controller
      */
     public function show(string $id)
     {
-        $topic = LearningTopic::findOrFail($id);
-        
-        return response()->json([
-            'status' => 'success',
-            'data' => $topic
-        ]);
+        try {
+            $topic = LearningTopic::findOrFail($id);
+            
+            // Get authenticated user ID if available
+            $userId = Auth::id();
+            
+            // Add lock status if user is authenticated
+            if ($userId) {
+                $topic->is_locked = $topic->isLockedForUser($userId);
+                
+                // Add prerequisites details if any
+                if (!empty($topic->prerequisites)) {
+                    $prerequisiteTopics = $topic->getPrerequisiteTopics();
+                    $prereqProgress = UserProgress::where('user_id', $userId)
+                        ->whereIn('topic_id', $prerequisiteTopics->pluck('id'))
+                        ->get()
+                        ->keyBy('topic_id');
+                        
+                    $prerequisites = $prerequisiteTopics->map(function($prereqTopic) use ($prereqProgress) {
+                        $progress = $prereqProgress->get($prereqTopic->id);
+                        return [
+                            'id' => $prereqTopic->id,
+                            'title' => $prereqTopic->title,
+                            'progress' => $progress ? $progress->progress_percentage : 0,
+                            'completed' => $progress && $progress->progress_percentage >= 80
+                        ];
+                    });
+                    
+                    $topic->prerequisite_details = $prerequisites;
+                }
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $topic
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching topic: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve topic',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -126,18 +187,69 @@ class LearningTopicController extends Controller
      */
     public function hierarchy()
     {
-        // Get only root topics (with no parent)
-        $rootTopics = LearningTopic::where('parent_id', null)
-            ->where('is_active', true)
-            ->orderBy('order')
-            ->with(['subtopics' => function($query) {
-                $query->where('is_active', true)->orderBy('order');
-            }])
-            ->get();
+        try {
+            // Get authenticated user ID if available
+            $userId = Auth::id();
             
-        return response()->json([
-            'status' => 'success',
-            'data' => $rootTopics
-        ]);
+            // Get only root topics (with no parent)
+            $query = LearningTopic::where('parent_id', null)
+                ->where('is_active', true)
+                ->orderBy('order');
+                
+            // Add eager loading for subtopics
+            $query->with(['subtopics' => function($query) {
+                $query->where('is_active', true)->orderBy('order');
+            }]);
+            
+            $rootTopics = $query->get();
+            
+            // Add lock status if user is authenticated
+            if ($userId) {
+                // First get all user progress to reduce database queries
+                $allTopicIds = collect();
+                $rootTopics->each(function($topic) use (&$allTopicIds) {
+                    $allTopicIds->push($topic->id);
+                    $topic->subtopics->each(function($subtopic) use (&$allTopicIds) {
+                        $allTopicIds->push($subtopic->id);
+                    });
+                });
+                
+                $userProgress = UserProgress::where('user_id', $userId)
+                    ->whereIn('topic_id', $allTopicIds)
+                    ->get()
+                    ->keyBy('topic_id');
+                
+                // Apply lock status to root topics
+                $rootTopics = $rootTopics->map(function($topic) use ($userId, $userProgress) {
+                    $progress = $userProgress->get($topic->id);
+                    $topic->progress = $progress ? $progress->progress_percentage : 0;
+                    $topic->is_locked = $topic->isLockedForUser($userId);
+                    
+                    // Apply lock status to subtopics
+                    if ($topic->subtopics) {
+                        $topic->subtopics = $topic->subtopics->map(function($subtopic) use ($userId, $userProgress) {
+                            $progress = $userProgress->get($subtopic->id);
+                            $subtopic->progress = $progress ? $progress->progress_percentage : 0;
+                            $subtopic->is_locked = $subtopic->isLockedForUser($userId);
+                            return $subtopic;
+                        });
+                    }
+                    
+                    return $topic;
+                });
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $rootTopics
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching topic hierarchy: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to retrieve topic hierarchy',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

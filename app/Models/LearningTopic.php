@@ -57,4 +57,66 @@ class LearningTopic extends Model
     {
         return $this->hasMany(UserProgress::class, 'topic_id');
     }
+    
+    /**
+     * Get the prerequisite topics for this topic.
+     * 
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public function getPrerequisiteTopics()
+    {
+        if (empty($this->prerequisites)) {
+            return collect([]);
+        }
+        
+        $prerequisiteIds = array_filter(
+            array_map('trim', explode(',', $this->prerequisites))
+        );
+        
+        if (empty($prerequisiteIds)) {
+            return collect([]);
+        }
+        
+        return self::whereIn('id', $prerequisiteIds)->get();
+    }
+    
+    /**
+     * Check if this topic is locked for a specific user.
+     * 
+     * @param int $userId
+     * @return bool
+     */
+    public function isLockedForUser($userId)
+    {
+        // If there are no prerequisites, the topic is unlocked
+        if (empty($this->prerequisites)) {
+            return false;
+        }
+        
+        $prerequisiteIds = array_filter(
+            array_map('trim', explode(',', $this->prerequisites))
+        );
+        
+        if (empty($prerequisiteIds)) {
+            return false;
+        }
+        
+        // Get progress for all prerequisites
+        $prerequisiteProgress = UserProgress::where('user_id', $userId)
+            ->whereIn('topic_id', $prerequisiteIds)
+            ->get();
+            
+        // If any prerequisite is not completed (progress < 80%), the topic is locked
+        foreach ($prerequisiteIds as $prereqId) {
+            $progress = $prerequisiteProgress->firstWhere('topic_id', $prereqId);
+            
+            // If no progress found or progress is less than 80%, topic is locked
+            if (!$progress || $progress->progress_percentage < 80) {
+                return true;
+            }
+        }
+        
+        // All prerequisites are completed, so topic is unlocked
+        return false;
+    }
 }

@@ -11,6 +11,7 @@ use App\Http\Controllers\API\UserProgressController;
 use App\Http\Controllers\API\CodeSnippetController;
 use App\Http\Controllers\API\LessonController;
 use App\Http\Controllers\API\QuizController;
+use App\Http\Controllers\API\PracticeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -121,6 +122,11 @@ Route::get('/exercises/{id}', [LessonController::class, 'getExercise']);
 // Debug route for all lesson plans
 Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);
 
+// Practice API routes
+Route::get('/practice/categories', [PracticeController::class, 'getCategories']);
+Route::get('/practice/categories/{id}/problems', [PracticeController::class, 'getProblemsByCategory']);
+Route::get('/practice/problems/{id}', [PracticeController::class, 'getProblem']);
+
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
@@ -140,6 +146,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // User progress
     Route::get('/progress', [UserProgressController::class, 'index']);
     Route::get('/progress/{topicId}', [UserProgressController::class, 'show']);
+    Route::put('/progress/{topicId}', [UserProgressController::class, 'update']);
+    Route::get('/topics/lock-status', [UserProgressController::class, 'getTopicsWithLockStatus']);
     
     // Code snippets
     Route::apiResource('snippets', CodeSnippetController::class);
@@ -164,4 +172,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/quiz-attempts/{id}/submit', [QuizController::class, 'submitQuizAttempt']);
     Route::get('/quiz-attempts/{id}', [QuizController::class, 'getQuizAttempt']);
     Route::get('/users/quizzes', [QuizController::class, 'getUserQuizzes']);
+    Route::post('/tutor/analyze-quiz-results', [AITutorController::class, 'analyzeQuizResults']);
+    
+    // Practice routes
+    Route::post('/practice/problems/{id}/solution', [PracticeController::class, 'submitSolution']);
+    Route::get('/practice/problems/{id}/hint', [PracticeController::class, 'getHint']);
+    Route::get('/practice/problems/{id}/resources', [PracticeController::class, 'getSuggestedResources']);
+    Route::get('/practice/problems/{id}/linked-resources', [PracticeController::class, 'getProblemResources']);
+    Route::post('/practice/problems/{id}/resources', [PracticeController::class, 'associateResources']);
 }); 
