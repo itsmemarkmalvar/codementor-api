@@ -14,9 +14,9 @@ class TutorService
 
     public function __construct()
     {
-        $this->apiKey = env('GEMINI_API_KEY', '');
-        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/';
-        $this->model = 'gemini-1.5-pro';
+        $this->apiKey = env('TOGETHER_API_KEY', '');
+        $this->apiUrl = env('TOGETHER_API_URL', 'https://api.together.xyz/v1');
+        $this->model = 'mistralai/Mixtral-8x7B-Instruct-v0.1'; // Default model, can be changed
     }
 
     /**
@@ -39,61 +39,49 @@ class TutorService
                 'formattedHistory_count' => count($formattedHistory)
             ]);
             
-            $url = $this->apiUrl . $this->model . ':generateContent?key=' . $this->apiKey;
-            
             $requestBody = [
-                'contents' => [
+                'model' => $this->model,
+                'messages' => [
                     [
-                        'role' => 'user',
-                        'parts' => [
-                            [
-                                'text' => $systemPrompt
-                            ]
-                        ]
+                        'role' => 'system',
+                        'content' => $systemPrompt
                     ]
                 ],
-                'generationConfig' => [
-                    'temperature' => 0.7,
-                    'topP' => 0.8,
-                    'topK' => 40,
-                    'maxOutputTokens' => $this->getMaxTokensBasedOnPreferences($preferences),
-                ]
+                'temperature' => 0.7,
+                'top_p' => 0.8,
+                'top_k' => 40,
+                'max_tokens' => $this->getMaxTokensBasedOnPreferences($preferences),
             ];
             
             // Add conversation history
             foreach ($formattedHistory as $message) {
-                $requestBody['contents'][] = [
+                $requestBody['messages'][] = [
                     'role' => $message['role'],
-                    'parts' => [
-                        [
-                            'text' => $message['content']
-                        ]
-                    ]
+                    'content' => $message['content']
                 ];
             }
             
             // Add the current question
-            $requestBody['contents'][] = [
+            $requestBody['messages'][] = [
                 'role' => 'user',
-                'parts' => [
-                    [
-                        'text' => $question
-                    ]
-                ]
+                'content' => $question
             ];
             
-            Log::info('TutorService::getResponse - Sending request to Gemini API', [
-                'url' => $url,
+            Log::info('TutorService::getResponse - Sending request to Together AI', [
+                'url' => $this->apiUrl . '/chat/completions',
                 'request_structure' => [
-                    'content_count' => count($requestBody['contents']),
-                    'maxOutputTokens' => $requestBody['generationConfig']['maxOutputTokens']
+                    'message_count' => count($requestBody['messages']),
+                    'max_tokens' => $requestBody['max_tokens']
                 ],
                 'request_body' => json_encode($requestBody, JSON_PRETTY_PRINT)
             ]);
             
-            $response = Http::post($url, $requestBody);
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json'
+            ])->post($this->apiUrl . '/chat/completions', $requestBody);
             
-            Log::info('TutorService::getResponse - Received response from Gemini API', [
+            Log::info('TutorService::getResponse - Received response from Together AI', [
                 'status' => $response->status(),
                 'response_structure' => array_keys($response->json())
             ]);
@@ -101,24 +89,24 @@ class TutorService
             if ($response->successful()) {
                 $responseData = $response->json();
                 
-                if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
-                    $text = $responseData['candidates'][0]['content']['parts'][0]['text'];
+                if (isset($responseData['choices'][0]['message']['content'])) {
+                    $text = $responseData['choices'][0]['message']['content'];
                     Log::info('TutorService::getResponse - Successfully extracted response text', [
                         'text_length' => strlen($text)
                     ]);
                     return $text;
                 } else {
-                    Log::error('Unexpected Gemini API response structure', [
+                    Log::error('Unexpected Together AI response structure', [
                         'response' => $responseData
                     ]);
                     throw new \Exception('Unexpected API response structure');
                 }
             } else {
-                Log::error('Gemini API error', [
+                Log::error('Together AI error', [
                     'status' => $response->status(),
                     'response' => $response->json()
                 ]);
-                throw new \Exception('Failed to get response from Gemini API: ' . json_encode($response->json()));
+                throw new \Exception('Failed to get response from Together AI: ' . json_encode($response->json()));
             }
         } catch (\Exception $e) {
             Log::error('Error in TutorService::getResponse', [
@@ -150,60 +138,48 @@ class TutorService
                 'formattedHistory_count' => count($formattedHistory)
             ]);
             
-            $url = $this->apiUrl . $this->model . ':generateContent?key=' . $this->apiKey;
-            
             $requestBody = [
-                'contents' => [
+                'model' => $this->model,
+                'messages' => [
                     [
-                        'role' => 'user',
-                        'parts' => [
-                            [
-                                'text' => $systemPrompt
-                            ]
-                        ]
+                        'role' => 'system',
+                        'content' => $systemPrompt
                     ]
                 ],
-                'generationConfig' => [
-                    'temperature' => 0.7,
-                    'topP' => 0.8,
-                    'topK' => 40,
-                    'maxOutputTokens' => $this->getMaxTokensBasedOnPreferences($preferences),
-                ]
+                'temperature' => 0.7,
+                'top_p' => 0.8,
+                'top_k' => 40,
+                'max_tokens' => $this->getMaxTokensBasedOnPreferences($preferences),
             ];
             
             // Add conversation history
             foreach ($formattedHistory as $message) {
-                $requestBody['contents'][] = [
+                $requestBody['messages'][] = [
                     'role' => $message['role'],
-                    'parts' => [
-                        [
-                            'text' => $message['content']
-                        ]
-                    ]
+                    'content' => $message['content']
                 ];
             }
             
             // Add the current question
-            $requestBody['contents'][] = [
+            $requestBody['messages'][] = [
                 'role' => 'user',
-                'parts' => [
-                    [
-                        'text' => $question
-                    ]
-                ]
+                'content' => $question
             ];
             
-            Log::info('TutorService::getResponseWithContext - Sending request to Gemini API', [
-                'url' => $url,
+            Log::info('TutorService::getResponseWithContext - Sending request to Together AI', [
+                'url' => $this->apiUrl . '/chat/completions',
                 'request_structure' => [
-                    'content_count' => count($requestBody['contents']),
-                    'maxOutputTokens' => $requestBody['generationConfig']['maxOutputTokens']
+                    'message_count' => count($requestBody['messages']),
+                    'max_tokens' => $requestBody['max_tokens']
                 ]
             ]);
             
-            $response = Http::post($url, $requestBody);
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json'
+            ])->post($this->apiUrl . '/chat/completions', $requestBody);
             
-            Log::info('TutorService::getResponseWithContext - Received response from Gemini API', [
+            Log::info('TutorService::getResponseWithContext - Received response from Together AI', [
                 'status' => $response->status(),
                 'response_structure' => array_keys($response->json())
             ]);
@@ -211,24 +187,24 @@ class TutorService
             if ($response->successful()) {
                 $responseData = $response->json();
                 
-                if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
-                    $text = $responseData['candidates'][0]['content']['parts'][0]['text'];
+                if (isset($responseData['choices'][0]['message']['content'])) {
+                    $text = $responseData['choices'][0]['message']['content'];
                     Log::info('TutorService::getResponseWithContext - Successfully extracted response text', [
                         'text_length' => strlen($text)
                     ]);
                     return $text;
                 } else {
-                    Log::error('Unexpected Gemini API response structure', [
+                    Log::error('Unexpected Together AI response structure', [
                         'response' => $responseData
                     ]);
                     throw new \Exception('Unexpected API response structure');
                 }
             } else {
-                Log::error('Gemini API error', [
+                Log::error('Together AI error', [
                     'status' => $response->status(),
                     'response' => $response->json()
                 ]);
-                throw new \Exception('Failed to get response from Gemini API: ' . json_encode($response->json()));
+                throw new \Exception('Failed to get response from Together AI: ' . json_encode($response->json()));
             }
         } catch (\Exception $e) {
             Log::error('Error in TutorService::getResponseWithContext', [
@@ -269,7 +245,7 @@ class TutorService
             if (is_array($message)) {
                 // Check if the message uses 'role' or 'sender' key
                 if (isset($message['role'])) {
-                    // Map 'assistant' role to 'model' for Gemini API
+                    // Map 'assistant' role to 'model' for Together AI
                     $role = $message['role'] === 'user' ? 'user' : 'model';
                     $content = $message['content'] ?? '';
                 } elseif (isset($message['sender'])) {
@@ -513,17 +489,17 @@ class TutorService
                 if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
                     return $responseData['candidates'][0]['content']['parts'][0]['text'];
                 } else {
-                    Log::error('Unexpected Gemini API response structure in code evaluation', [
+                    Log::error('Unexpected Together AI response structure in code evaluation', [
                         'response' => $responseData
                     ]);
                     throw new \Exception('Unexpected API response structure');
                 }
             } else {
-                Log::error('Gemini API error in code evaluation', [
+                Log::error('Together AI error in code evaluation', [
                     'status' => $response->status(),
                     'response' => $response->json()
                 ]);
-                throw new \Exception('Failed to get response from Gemini API');
+                throw new \Exception('Failed to get response from Together AI');
             }
         } catch (\Exception $e) {
             Log::error('Error in TutorService::evaluateCode', [
@@ -542,144 +518,102 @@ class TutorService
         try {
             Log::info('TutorService::evaluateCodeWithContext - Starting code evaluation', [
                 'code_length' => strlen($code),
-                'context_keys' => !empty($context) ? array_keys($context) : []
+                'context_keys' => array_keys($context)
             ]);
             
-            $url = $this->apiUrl . $this->model . ':generateContent?key=' . $this->apiKey;
+            // Construct a prompt asking for code feedback
+            $prompt = "Please evaluate the following Java code and provide feedback. ";
             
-            // Extract useful context variables
-            $topic = $context['topic'] ?? null;
-            $stdout = $context['stdout'] ?? '';
-            $stderr = $context['stderr'] ?? '';
-            $exerciseTitle = $context['exercise_title'] ?? null;
-            $exerciseInstructions = $context['exercise_instructions'] ?? null;
-            $testResults = $context['test_results'] ?? null;
-            $isCorrect = $context['is_correct'] ?? null;
-            $score = $context['score'] ?? null;
-            
-            // Build the prompt
-            $prompt = "Please evaluate the following Java code";
-            if ($topic) {
-                $prompt .= " related to the topic: $topic";
-            }
-            if ($exerciseTitle) {
-                $prompt .= " for the exercise: \"$exerciseTitle\"";
-            }
-            $prompt .= ".\n\n";
-            
-            if ($exerciseInstructions) {
-                $prompt .= "Exercise Instructions:\n$exerciseInstructions\n\n";
+            if (!empty($context['module'])) {
+                $prompt .= "The code is related to the module: {$context['module']['title']}. ";
             }
             
-            $prompt .= "Code:\n```java\n$code\n```\n\n";
-            
-            if ($stdout) {
-                $prompt .= "Standard Output:\n```\n$stdout\n```\n\n";
+            if (!empty($context['lesson_plan'])) {
+                $prompt .= "It's part of the lesson plan: {$context['lesson_plan']['title']}. ";
             }
             
-            if ($stderr) {
-                $prompt .= "Standard Error:\n```\n$stderr\n```\n\n";
-            }
-            
-            // Add test results if available
-            if ($testResults && is_array($testResults)) {
-                $prompt .= "Test Results:\n";
-                foreach ($testResults as $index => $test) {
-                    $result = $test['passed'] ? "PASS" : "FAIL";
-                    $prompt .= "Test #" . ($index + 1) . ": $result\n";
-                    $prompt .= "  Input: " . ($test['input'] ?? 'N/A') . "\n";
-                    $prompt .= "  Expected Output: " . ($test['expected_output'] ?? 'N/A') . "\n";
-                    $prompt .= "  Actual Output: " . ($test['actual_output'] ?? 'N/A') . "\n";
-                }
-                $prompt .= "\n";
+            if (!empty($context['exercise'])) {
+                $prompt .= "The specific exercise is: {$context['exercise']['title']}. ";
+                $prompt .= "\nExercise description: {$context['exercise']['description']}. ";
                 
-                if (isset($score)) {
-                    $prompt .= "Overall Score: $score%\n\n";
+                if (!empty($context['exercise']['instructions'])) {
+                    $prompt .= "\nInstructions: {$context['exercise']['instructions']}. ";
+                }
+                
+                if (!empty($context['exercise']['expected_output'])) {
+                    $prompt .= "\nExpected output: {$context['exercise']['expected_output']}. ";
                 }
             }
             
-            // Add instruction to compare with examples previously provided
-            $prompt .= "In your evaluation, please check if the code correctly implements the concepts demonstrated in any examples you provided earlier in the chat. If there are examples you previously shared on this topic, compare this submission with those examples, noting similarities, differences, and whether the user has successfully applied the patterns and techniques you suggested.\n\n";
+            $prompt .= "\n\nHere's the code to evaluate:\n\n```java\n" . $code . "\n```\n\n";
             
-            $prompt .= "Please provide detailed feedback on:
-1. Whether the code correctly implements the solution to the given problem
-2. Code correctness and whether it would compile and run as expected
-3. Code style and adherence to Java best practices
-4. Suggestions for improvement (if any)
-5. Explanation of any errors or incorrect implementations
-6. Compare with examples that may have been provided earlier in the conversation
+            $prompt .= "Provide specific feedback on:
+1. Correctness - Does it meet the requirements?
+2. Code style and best practices
+3. Efficiency and performance
+4. Potential bugs or edge cases
+5. Suggestions for improvement
 
-Provide the feedback in a student-friendly, encouraging tone, highlighting what they did correctly first, then suggesting improvements.";
+Format your response as:
+- Summary: A brief assessment of the code quality and correctness
+- Strengths: What the code does well
+- Areas for improvement: Specific issues or concerns
+- Code suggestions: Examples of how to fix or improve the code
+- Overall assessment: A final evaluation of the code quality (Excellent, Good, Needs improvement, or Poor)";
             
             $requestBody = [
-                'contents' => [
+                'model' => $this->model,
+                'messages' => [
                     [
                         'role' => 'user',
-                        'parts' => [
-                            [
-                                'text' => $prompt
-                            ]
-                        ]
+                        'content' => $prompt
                     ]
                 ],
-                'generationConfig' => [
-                    'temperature' => 0.2,
-                    'topP' => 0.8,
-                    'topK' => 40,
-                    'maxOutputTokens' => 1000,
-                ]
+                'temperature' => 0.7,
+                'top_p' => 0.8,
+                'top_k' => 40,
+                'max_tokens' => 1500,
             ];
             
-            // Add conversation history if available to provide context on previously shared examples
-            if (isset($context['conversation_history']) && is_array($context['conversation_history'])) {
-                $formattedHistory = $this->formatConversationHistory($context['conversation_history']);
-                foreach ($formattedHistory as $message) {
-                    $requestBody['contents'][] = [
-                        'role' => $message['role'],
-                        'parts' => [
-                            [
-                                'text' => $message['content']
-                            ]
-                        ]
-                    ];
-                }
-            }
-            
-            Log::info('TutorService::evaluateCodeWithContext - Sending request to Gemini API', [
-                'url' => $url,
+            Log::info('TutorService::evaluateCodeWithContext - Sending request to Together AI', [
+                'url' => $this->apiUrl . '/chat/completions',
                 'request_structure' => [
-                    'content_count' => count($requestBody['contents']),
-                    'maxOutputTokens' => $requestBody['generationConfig']['maxOutputTokens']
+                    'message_count' => count($requestBody['messages']),
+                    'prompt_length' => strlen($prompt)
                 ]
             ]);
             
-            $response = Http::post($url, $requestBody);
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Content-Type' => 'application/json'
+            ])->post($this->apiUrl . '/chat/completions', $requestBody);
             
             Log::info('TutorService::evaluateCodeWithContext - Received response', [
-                'status' => $response->status()
+                'status' => $response->status(),
+                'response_structure' => array_keys($response->json())
             ]);
             
             if ($response->successful()) {
                 $responseData = $response->json();
                 
-                if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
-                    $feedback = $responseData['candidates'][0]['content']['parts'][0]['text'];
+                if (isset($responseData['choices'][0]['message']['content'])) {
+                    $text = $responseData['choices'][0]['message']['content'];
                     Log::info('TutorService::evaluateCodeWithContext - Successfully extracted feedback', [
-                        'feedback_length' => strlen($feedback)
+                        'text_length' => strlen($text)
                     ]);
-                    return $feedback;
+                    return $text;
                 } else {
-                    Log::error('Unexpected Gemini API response structure in code evaluation', [
+                    Log::error('Unexpected Together AI response structure', [
                         'response' => $responseData
                     ]);
                     throw new \Exception('Unexpected API response structure');
                 }
             } else {
-                Log::error('Gemini API error in code evaluation', [
+                Log::error('Together AI error', [
                     'status' => $response->status(),
                     'response' => $response->json()
                 ]);
-                throw new \Exception('Failed to get response from Gemini API');
+                throw new \Exception('Failed to get response from Together AI: ' . json_encode($response->json()));
             }
         } catch (\Exception $e) {
             Log::error('Error in TutorService::evaluateCodeWithContext', [
