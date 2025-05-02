@@ -12,6 +12,7 @@ use App\Http\Controllers\API\CodeSnippetController;
 use App\Http\Controllers\API\LessonController;
 use App\Http\Controllers\API\QuizController;
 use App\Http\Controllers\API\PracticeController;
+use App\Http\Controllers\API\ProjectController;
 
 /*
 |--------------------------------------------------------------------------
@@ -104,6 +105,7 @@ Route::get('/test-ai', function() {
 // AI Tutor routes - temporarily public for testing
 Route::post('/tutor/chat', [AITutorController::class, 'chat']);
 Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
+Route::post('/tutor/execute-project', [AITutorController::class, 'executeProject']);
 Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
 
 // Learning topics public routes
@@ -126,6 +128,9 @@ Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);
 Route::get('/practice/categories', [PracticeController::class, 'getCategories']);
 Route::get('/practice/categories/{id}/problems', [PracticeController::class, 'getProblemsByCategory']);
 Route::get('/practice/problems/{id}', [PracticeController::class, 'getProblem']);
+
+// Test route for project update (remove in production)
+Route::put('/test-projects/{id}', [ProjectController::class, 'update']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -180,4 +185,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/practice/problems/{id}/resources', [PracticeController::class, 'getSuggestedResources']);
     Route::get('/practice/problems/{id}/linked-resources', [PracticeController::class, 'getProblemResources']);
     Route::post('/practice/problems/{id}/resources', [PracticeController::class, 'associateResources']);
+    
+    // Project management routes
+    Route::get('/projects', [ProjectController::class, 'index']);
+    Route::post('/projects', [ProjectController::class, 'store']);
+    Route::get('/projects/{id}', [ProjectController::class, 'show']);
+    Route::put('/projects/{id}', [ProjectController::class, 'update']);
+    Route::delete('/projects/{id}', [ProjectController::class, 'destroy']);
+    
+    // Project files management
+    Route::post('/projects/{projectId}/files', [ProjectController::class, 'addFile']);
+    Route::put('/projects/{projectId}/files/{fileId}', [ProjectController::class, 'updateFile']);
+    Route::delete('/projects/{projectId}/files/{fileId}', [ProjectController::class, 'deleteFile']);
+    
+    // Project import/export
+    Route::get('/projects/{id}/export', [ProjectController::class, 'export']);
+    Route::post('/projects/import', [ProjectController::class, 'import']);
 }); 

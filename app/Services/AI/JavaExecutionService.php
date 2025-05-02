@@ -94,6 +94,101 @@ class JavaExecutionService
             ];
         }
     }
+
+    /**
+     * Execute a Java project with multiple files and return the result
+     *
+     * @param array $files Array of file objects with 'path' and 'content' keys
+     * @param string $mainClass The main class to execute (e.g. 'com.example.Main')
+     * @param string|null $input Optional input to provide to the program
+     * @return array The execution result containing stdout, stderr, and execution info
+     */
+    public function executeJavaProject(array $files, string $mainClass, ?string $input = null): array
+    {
+        try {
+            // Extract the simple class name from the fully qualified name
+            $mainClassSimpleName = $this->extractSimpleClassName($mainClass);
+            
+            // Create a unique directory for this execution
+            $executionId = Str::uuid()->toString();
+            $executionDir = $this->tempDir . '/' . $executionId;
+            File::makeDirectory($executionDir, 0755, true);
+
+            // Map to store file paths => compiled class paths (for validation)
+            $javaFiles = [];
+            
+            // Process and save all files
+            foreach ($files as $file) {
+                if (!isset($file['path']) || !isset($file['content'])) {
+                    continue; // Skip invalid files
+                }
+                
+                // Skip non-Java files
+                if (!Str::endsWith($file['path'], '.java')) {
+                    continue;
+                }
+                
+                // Normalize path and create necessary directories
+                $relativePath = ltrim($file['path'], '/');
+                $fullPath = $executionDir . '/' . $relativePath;
+                $directory = dirname($fullPath);
+                
+                if (!File::exists($directory)) {
+                    File::makeDirectory($directory, 0755, true);
+                }
+                
+                // Write the file content
+                File::put($fullPath, $file['content']);
+                $javaFiles[] = $fullPath;
+            }
+            
+            if (empty($javaFiles)) {
+                return [
+                    'success' => false,
+                    'stdout' => '',
+                    'stderr' => 'No Java files found in the project.',
+                    'executionTime' => 0,
+                ];
+            }
+            
+            // Write input to a file if provided
+            $inputFile = null;
+            if ($input) {
+                $inputFile = $executionDir . '/input.txt';
+                File::put($inputFile, $input);
+            }
+            
+            // Compile all Java files together
+            $compileResult = $this->compileJavaProject($javaFiles, $executionDir);
+            
+            if (!$compileResult['success']) {
+                $this->cleanUp($executionDir);
+                return [
+                    'success' => false,
+                    'stdout' => '',
+                    'stderr' => $compileResult['stderr'],
+                    'executionTime' => 0,
+                ];
+            }
+            
+            // Execute the compiled project
+            $executeResult = $this->runJavaProject($mainClass, $executionDir, $inputFile);
+            
+            // Clean up temporary files
+            $this->cleanUp($executionDir);
+            
+            return $executeResult;
+            
+        } catch (Exception $e) {
+            Log::error('Java project execution error: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'stdout' => '',
+                'stderr' => 'An error occurred during project execution: ' . $e->getMessage(),
+                'executionTime' => 0,
+            ];
+        }
+    }
     
     /**
      * Extract the class name from Java code
@@ -108,6 +203,18 @@ class JavaExecutionService
         
         return $matches[1] ?? null;
     }
+
+    /**
+     * Extract the simple class name from a fully qualified class name
+     * 
+     * @param string $fullyQualifiedName
+     * @return string
+     */
+    protected function extractSimpleClassName(string $fullyQualifiedName): string
+    {
+        $parts = explode('.', $fullyQualifiedName);
+        return end($parts);
+    }
     
     /**
      * Compile Java code
@@ -119,6 +226,41 @@ class JavaExecutionService
     protected function compileJavaCode(string $filePath, string $outputDir): array
     {
         $command = sprintf('cd %s && javac %s 2>&1', escapeshellarg($outputDir), escapeshellarg(basename($filePath)));
+        
+        $output = [];
+        $returnCode = 0;
+        
+        exec($command, $output, $returnCode);
+        
+        $stderr = implode("\n", $output);
+        
+        return [
+            'success' => $returnCode === 0,
+            'stderr' => $stderr,
+        ];
+    }
+
+    /**
+     * Compile multiple Java files as a project
+     *
+     * @param array $filePaths Array of paths to Java files
+     * @param string $outputDir Directory for compiled output
+     * @return array Compilation result
+     */
+    protected function compileJavaProject(array $filePaths, string $outputDir): array
+    {
+        // Convert absolute paths to relative paths from the output directory
+        $relativeFilePaths = [];
+        foreach ($filePaths as $path) {
+            $relativePath = str_replace($outputDir . '/', '', $path);
+            $relativeFilePaths[] = $relativePath;
+        }
+        
+        // Join all file paths with space for the javac command
+        $filesArg = implode(' ', array_map('escapeshellarg', $relativeFilePaths));
+        
+        // Include classpath as current directory
+        $command = sprintf('cd %s && javac -cp . %s 2>&1', escapeshellarg($outputDir), $filesArg);
         
         $output = [];
         $returnCode = 0;
@@ -194,6 +336,74 @@ class JavaExecutionService
         if ($isWindows && $executionTime >= $this->maxExecutionTime) {
             // Force terminate if still running (Windows specific)
             // This is a simplified approach - a more robust solution would use process management
+            shell_exec("taskkill /F /IM java.exe 2>NUL");
+            $stderr = 'Execution timed out. Your code took too long to run.';
+        }
+        
+        return [
+            'success' => empty($stderr),
+            'stdout' => $stdout ?: '',
+            'stderr' => $stderr,
+            'executionTime' => round($executionTime, 3),
+        ];
+    }
+
+    /**
+     * Run compiled Java project
+     *
+     * @param string $mainClass Fully qualified name of the main class to run
+     * @param string $executionDir Directory containing the compiled classes
+     * @param string|null $inputFile Path to input file if any
+     * @return array Execution result
+     */
+    protected function runJavaProject(string $mainClass, string $executionDir, ?string $inputFile): array
+    {
+        // Determine operating system
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        
+        // Build the command with resource limits
+        if ($isWindows) {
+            $command = sprintf(
+                'cd %s && java -Xmx%dM -cp . %s',
+                escapeshellarg($executionDir),
+                $this->memoryLimit,
+                escapeshellarg($mainClass)
+            );
+        } else {
+            $command = sprintf(
+                'cd %s && timeout %d java -Xmx%dM -cp . %s',
+                escapeshellarg($executionDir),
+                $this->maxExecutionTime,
+                $this->memoryLimit,
+                escapeshellarg($mainClass)
+            );
+        }
+        
+        // Add input redirection if input file exists
+        if ($inputFile && File::exists($inputFile)) {
+            $command .= ' < ' . escapeshellarg($inputFile);
+        }
+        
+        // Redirect stderr to a separate file
+        $stderrFile = $executionDir . '/stderr.txt';
+        $command .= ' 2> ' . escapeshellarg($stderrFile);
+        
+        // Measure execution time
+        $startTime = microtime(true);
+        
+        // Execute the command
+        $stdout = shell_exec($command);
+        
+        $executionTime = microtime(true) - $startTime;
+        
+        // Read stderr if exists
+        $stderr = '';
+        if (File::exists($stderrFile)) {
+            $stderr = File::get($stderrFile);
+        }
+        
+        // Check for timeout manually on Windows
+        if ($isWindows && $executionTime >= $this->maxExecutionTime) {
             shell_exec("taskkill /F /IM java.exe 2>NUL");
             $stderr = 'Execution timed out. Your code took too long to run.';
         }

@@ -545,16 +545,46 @@ class TutorService
                 }
             }
             
-            $prompt .= "\n\nHere's the code to evaluate:\n\n```java\n" . $code . "\n```\n\n";
+            // Check if we're dealing with a multi-file project
+            if (!empty($context['project_files'])) {
+                $prompt .= "\n\nThis is a multi-file Java project. Here are all the files:\n\n";
+                
+                foreach ($context['project_files'] as $file) {
+                    $prompt .= "File: {$file['path']}\n```java\n{$file['content']}\n```\n\n";
+                }
+                
+                if (!empty($context['main_class'])) {
+                    $prompt .= "The main class is: {$context['main_class']}\n\n";
+                }
+            } else {
+                // Single file code evaluation
+                $prompt .= "\n\nHere's the code to evaluate:\n\n```java\n" . $code . "\n```\n\n";
+            }
+            
+            // Execution results if available
+            if (!empty($context['stdout']) || !empty($context['stderr'])) {
+                $prompt .= "Execution results:\n";
+                if (!empty($context['stdout'])) {
+                    $prompt .= "Standard output:\n```\n{$context['stdout']}\n```\n\n";
+                }
+                if (!empty($context['stderr'])) {
+                    $prompt .= "Standard error:\n```\n{$context['stderr']}\n```\n\n";
+                }
+            }
             
             $prompt .= "Provide specific feedback on:
 1. Correctness - Does it meet the requirements?
 2. Code style and best practices
 3. Efficiency and performance
 4. Potential bugs or edge cases
-5. Suggestions for improvement
+5. Suggestions for improvement";
 
-Format your response as:
+            if (!empty($context['project_files'])) {
+                $prompt .= "\n6. Project organization and structure
+7. Interactions between classes and files";
+            }
+            
+            $prompt .= "\n\nFormat your response as:
 - Summary: A brief assessment of the code quality and correctness
 - Strengths: What the code does well
 - Areas for improvement: Specific issues or concerns

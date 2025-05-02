@@ -340,6 +340,191 @@ class AITutorController extends Controller
     }
 
     /**
+     * Execute Java project with multiple files and get feedback from the AI tutor.
+     */
+    public function executeProject(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'files' => 'required|array',
+            'files.*.path' => 'required|string',
+            'files.*.content' => 'required|string',
+            'main_class' => 'required|string',
+            'input' => 'nullable|string',
+            'session_id' => 'nullable|exists:learning_sessions,id',
+            'topic_id' => 'nullable|exists:learning_topics,id',
+            'module_id' => 'nullable|exists:lesson_modules,id',
+            'exercise_id' => 'nullable|exists:lesson_exercises,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $userId = Auth::id() ?? 1;
+            
+            // Execute the project
+            $executionResult = $this->javaExecutionService->executeJavaProject(
+                $request->files,
+                $request->main_class,
+                $request->input ?? ''
+            );
+
+            // Variables for additional context and result tracking
+            $testResults = null;
+            $isCorrect = false;
+            $score = 0;
+            $exerciseContext = [];
+
+            // If this is for a specific exercise, evaluate against test cases
+            if ($request->has('exercise_id') && $request->exercise_id) {
+                $exercise = LessonExercise::find($request->exercise_id);
+                
+                if ($exercise && $exercise->test_cases) {
+                    // Run test cases
+                    $testResults = [];
+                    $passedCount = 0;
+                    
+                    foreach ($exercise->test_cases as $index => $testCase) {
+                        $testInput = $testCase['input'] ?? '';
+                        $expectedOutput = $testCase['output'] ?? '';
+                        
+                        // Execute with test case input
+                        $testExecution = $this->javaExecutionService->executeJavaProject(
+                            $request->files,
+                            $request->main_class,
+                            $testInput
+                        );
+                        
+                        $passed = false;
+                        if ($testExecution['success']) {
+                            // Simple string comparison - can be enhanced with more sophisticated comparison
+                            $actualOutput = trim($testExecution['stdout'] ?? '');
+                            $expectedOutput = trim($expectedOutput);
+                            $passed = $actualOutput == $expectedOutput;
+                            
+                            if ($passed) {
+                                $passedCount++;
+                            }
+                        }
+                        
+                        $testResults[] = [
+                            'test_number' => $index + 1,
+                            'input' => $testInput,
+                            'expected_output' => $expectedOutput,
+                            'actual_output' => $testExecution['stdout'] ?? '',
+                            'passed' => $passed
+                        ];
+                    }
+                    
+                    // Calculate score and correctness
+                    $totalTests = count($exercise->test_cases);
+                    $score = $totalTests > 0 ? round(($passedCount / $totalTests) * 100) : 0;
+                    $isCorrect = $score >= 100;
+                    
+                    // Add exercise context for AI feedback
+                    $exerciseContext = [
+                        'exercise_title' => $exercise->title,
+                        'exercise_instructions' => $exercise->instructions,
+                        'test_results' => $testResults,
+                        'is_correct' => $isCorrect,
+                        'score' => $score
+                    ];
+                    
+                    // Record this attempt - store all files content
+                    $attemptNumber = ExerciseAttempt::getNextAttemptNumber($userId, $exercise->id);
+                    
+                    // Collect all code into a single string for storage
+                    $allCode = '';
+                    foreach ($request->files as $file) {
+                        $allCode .= "// File: " . $file['path'] . "\n";
+                        $allCode .= $file['content'] . "\n\n";
+                    }
+                    
+                    ExerciseAttempt::create([
+                        'user_id' => $userId,
+                        'exercise_id' => $exercise->id,
+                        'attempt_number' => $attemptNumber,
+                        'submitted_code' => $allCode,
+                        'is_correct' => $isCorrect,
+                        'score' => $score,
+                        'test_results' => $testResults,
+                        'time_spent_seconds' => $request->time_spent_seconds ?? 0
+                    ]);
+                }
+            }
+
+            // Get AI feedback on the code
+            $aiFeedback = '';
+            if ($executionResult['success']) {
+                // Extract main file content for feedback
+                $mainFile = null;
+                foreach ($request->files as $file) {
+                    if (strpos($file['path'], $request->main_class) !== false) {
+                        $mainFile = $file;
+                        break;
+                    }
+                }
+                
+                $mainCode = $mainFile ? $mainFile['content'] : '';
+                
+                // Add relevant context for the AI feedback
+                $feedbackContext = [
+                    'stdout' => $executionResult['stdout'] ?? '',
+                    'stderr' => $executionResult['stderr'] ?? '',
+                    'project_files' => $request->files, // Pass all files for context
+                    'main_class' => $request->main_class,
+                    'topic' => $request->topic_id ? LearningTopic::find($request->topic_id)->title : null,
+                    'conversation_history' => $request->conversation_history ?? []
+                ];
+                
+                // Merge with exercise context if available
+                if (!empty($exerciseContext)) {
+                    $feedbackContext = array_merge($feedbackContext, $exerciseContext);
+                }
+                
+                $aiFeedback = $this->tutorService->evaluateCodeWithContext(
+                    $mainCode, // Pass the main file content
+                    $feedbackContext
+                );
+            }
+
+            // Save the project to session history if provided
+            if ($request->has('session_id') && $request->session_id) {
+                $session = LearningSession::find($request->session_id);
+                
+                if ($session) {
+                    // Update session last_activity
+                    $session->update([
+                        'last_activity_at' => now(),
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'execution' => $executionResult,
+                    'test_results' => $testResults,
+                    'is_correct' => $isCorrect,
+                    'score' => $score,
+                    'feedback' => $aiFeedback,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error executing Java project: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error executing Java project',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Update user progress for a topic.
      */
     public function updateProgress(Request $request)
