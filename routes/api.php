@@ -13,6 +13,7 @@ use App\Http\Controllers\API\LessonController;
 use App\Http\Controllers\API\QuizController;
 use App\Http\Controllers\API\PracticeController;
 use App\Http\Controllers\API\ProjectController;
+use Illuminate\Support\Facades\Auth;
 
 /*
 |--------------------------------------------------------------------------
@@ -129,8 +130,34 @@ Route::get('/practice/categories', [PracticeController::class, 'getCategories'])
 Route::get('/practice/categories/{id}/problems', [PracticeController::class, 'getProblemsByCategory']);
 Route::get('/practice/problems/{id}', [PracticeController::class, 'getProblem']);
 
-// Test route for project update (remove in production)
-Route::put('/test-projects/{id}', [ProjectController::class, 'update']);
+// Test routes for development only (REMOVE IN PRODUCTION)
+Route::post('/test-projects', [ProjectController::class, 'testStore']);
+Route::put('/test-projects/{id}', [ProjectController::class, 'update'])->withoutMiddleware(['auth:sanctum']);
+
+// Testing route - remove in production
+Route::get('/test-auth', function(Request $request) {
+    $headers = $request->headers->all();
+    $authHeader = $request->header('Authorization');
+    $isAuthenticated = Auth::check();
+    $user = Auth::user();
+    
+    return response()->json([
+        'success' => true,
+        'message' => 'Auth test route',
+        'is_authenticated' => $isAuthenticated,
+        'auth_header' => $authHeader ? substr($authHeader, 0, 15) . '...' : 'Not present',
+        'user' => $isAuthenticated ? [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email
+        ] : null,
+        'request_details' => [
+            'method' => $request->method(),
+            'content_type' => $request->header('Content-Type'),
+            'accept' => $request->header('Accept')
+        ]
+    ]);
+});
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {

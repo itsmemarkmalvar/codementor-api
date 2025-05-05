@@ -17,12 +17,50 @@ class ProjectController extends Controller
     /**
      * Display a listing of the projects.
      */
-    public function index()
+    public function index(Request $request)
     {
         $user = Auth::user();
-        $projects = Project::where('user_id', $user->id)
-            ->orderBy('updated_at', 'desc')
-            ->get();
+        
+        // Determine if we should include files in the response
+        $includeFiles = $request->has('include_files') && $request->include_files;
+        
+        \Log::info('Projects index method called', [
+            'user_id' => $user->id,
+            'include_files' => $includeFiles
+        ]);
+        
+        // Query builder for projects
+        $query = Project::where('user_id', $user->id)
+            ->orderBy('updated_at', 'desc');
+            
+        // Load files if requested
+        if ($includeFiles) {
+            $query->with('files');
+        }
+        
+        $projects = $query->get();
+        
+        // Add file counts to each project
+        foreach ($projects as $project) {
+            // If files are loaded, use the collection length
+            if ($includeFiles && $project->relationLoaded('files')) {
+                $project->file_count = $project->files->count();
+            } else {
+                // Otherwise, perform a count query
+                $project->file_count = ProjectFile::where('project_id', $project->id)->count();
+            }
+        }
+        
+        \Log::info('Returning projects with file counts', [
+            'project_count' => $projects->count(),
+            'projects' => $projects->map(function($p) {
+                return [
+                    'id' => $p->id,
+                    'name' => $p->name,
+                    'file_count' => $p->file_count
+                ];
+            })
+        ]);
 
         return response()->json([
             'success' => true,
@@ -35,6 +73,39 @@ class ProjectController extends Controller
      */
     public function store(Request $request)
     {
+        // Enable query logging
+        DB::enableQueryLog();
+        
+        // Add detailed logging for debugging
+        \Log::debug('Project store method called with data:', [
+            'request_data' => $request->all(),
+            'files_count' => count($request->input('files', [])),
+            'user_id' => Auth::check() ? Auth::id() : 'Not authenticated',
+            'auth_header' => $request->hasHeader('Authorization') ? 'Present' : 'Missing',
+            'auth_header_value' => $request->hasHeader('Authorization') ? substr($request->header('Authorization'), 0, 20) . '...' : 'None'
+        ]);
+
+        // First check authentication
+        if (!Auth::check()) {
+            \Log::error('Authentication failed for project creation', [
+                'token' => $request->bearerToken() ? 'Present' : 'Missing',
+                'auth_header' => $request->header('Authorization'),
+                'headers' => $request->headers->all()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Authentication required',
+                'error' => 'User is not authenticated'
+            ], 401);
+        }
+        
+        // Log authenticated user information
+        \Log::info('User authenticated for project creation', [
+            'user_id' => Auth::id(),
+            'user_email' => Auth::user()->email
+        ]);
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -49,6 +120,9 @@ class ProjectController extends Controller
         ]);
 
         if ($validator->fails()) {
+            \Log::error('Project validation failed:', [
+                'errors' => $validator->errors()->toArray()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
@@ -68,27 +142,82 @@ class ProjectController extends Controller
                 'metadata' => $request->metadata ?? null,
             ]);
 
+            // Get the files array from the request
+            $files = $request->input('files', []);
+            
+            \Log::debug('Project created successfully:', [
+                'project_id' => $project->id,
+                'files_to_create' => count($files)
+            ]);
+
             // Create project files
-            foreach ($request->files as $fileData) {
-                $project->files()->create([
-                    'name' => $fileData['name'],
-                    'path' => $fileData['path'],
-                    'content' => $fileData['content'] ?? null,
-                    'is_directory' => $fileData['is_directory'],
-                    'language' => $fileData['language'] ?? null,
-                    'parent_path' => $fileData['parent_path'] ?? null,
-                ]);
+            foreach ($files as $fileData) {
+                try {
+                    \Log::debug('Creating file:', [
+                        'name' => $fileData['name'],
+                        'path' => $fileData['path'],
+                        'is_directory' => $fileData['is_directory']
+                    ]);
+                    
+                    // Explicitly set the project_id and handle content being null
+                    $file = new ProjectFile([
+                        'name' => $fileData['name'],
+                        'path' => $fileData['path'],
+                        'content' => isset($fileData['content']) ? $fileData['content'] : null,
+                        'is_directory' => $fileData['is_directory'],
+                        'language' => $fileData['language'] ?? null,
+                        'parent_path' => $fileData['parent_path'] ?? null,
+                    ]);
+                    
+                    // Explicitly associate with project
+                    $file->project_id = $project->id;
+                    $file->save();
+                    
+                    \Log::debug('Project file created:', [
+                        'file_id' => $file->id,
+                        'file_name' => $file->name,
+                        'file_path' => $file->path,
+                        'project_id' => $file->project_id
+                    ]);
+                } catch (\Exception $fileEx) {
+                    \Log::error('Failed to create project file:', [
+                        'error' => $fileEx->getMessage(),
+                        'trace' => $fileEx->getTraceAsString(),
+                        'file_data' => $fileData
+                    ]);
+                    throw $fileEx;
+                }
             }
 
+            // Count the files that were actually saved
+            $fileCount = $project->files()->count();
+            \Log::debug('Project files count after save:', ['count' => $fileCount]);
+            \Log::debug('SQL Queries:', ['queries' => DB::getQueryLog()]);
+
             DB::commit();
+
+            \Log::debug('Project and files saved successfully', [
+                'project_id' => $project->id,
+                'files_count' => $project->files()->count()
+            ]);
+
+            // Get the project with files to return in the response
+            $project = Project::with('files')->find($project->id);
+            $project->file_count = $project->files->count();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Project created successfully',
-                'data' => $project->load('files')
+                'data' => $project
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
+            
+            \Log::error('Failed to create project:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'queries' => DB::getQueryLog()
+            ]);
             
             return response()->json([
                 'success' => false,
@@ -112,6 +241,14 @@ class ProjectController extends Controller
                 'message' => 'Unauthorized access'
             ], 403);
         }
+
+        // Always include file count
+        $project->file_count = $project->files->count();
+        
+        \Log::debug('Project show - returning project details:', [
+            'project_id' => $project->id,
+            'file_count' => $project->file_count
+        ]);
 
         return response()->json([
             'success' => true,
@@ -595,5 +732,130 @@ class ProjectController extends Controller
         ];
         
         return $languageMap[strtolower($extension)] ?? null;
+    }
+
+    /**
+     * Store a new project without authentication (FOR TESTING ONLY - REMOVE IN PRODUCTION)
+     */
+    public function testStore(Request $request)
+    {
+        // Enable query logging
+        DB::enableQueryLog();
+        
+        \Log::debug('TEST STORE - Project creation test called with data:', [
+            'request_data' => $request->all()
+        ]);
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'main_file_id' => 'nullable|string',
+            'files' => 'required|array',
+            'files.*.name' => 'required|string|max:255',
+            'files.*.path' => 'required|string|max:255',
+            'files.*.content' => 'nullable|string',
+            'files.*.is_directory' => 'required|boolean',
+            'files.*.language' => 'nullable|string|max:50',
+            'files.*.parent_path' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            \Log::error('TEST STORE - Project validation failed:', [
+                'errors' => $validator->errors()->toArray()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+            
+            // Create project - hardcode user_id to 1 for testing
+            $project = Project::create([
+                'user_id' => 1, // Hardcoded for testing
+                'name' => $request->name,
+                'description' => $request->description,
+                'main_file_id' => $request->main_file_id,
+                'metadata' => $request->metadata ?? null,
+            ]);
+
+            \Log::debug('TEST STORE - Project created successfully:', [
+                'project_id' => $project->id,
+                'files_to_create' => count($request->files)
+            ]);
+
+            // Create project files
+            foreach ($request->files as $fileData) {
+                try {
+                    $file = new ProjectFile([
+                        'name' => $fileData['name'],
+                        'path' => $fileData['path'],
+                        'content' => $fileData['content'] ?? null,
+                        'is_directory' => $fileData['is_directory'],
+                        'language' => $fileData['language'] ?? null,
+                        'parent_path' => $fileData['parent_path'] ?? null,
+                    ]);
+                    
+                    // Explicitly set project_id to ensure relationship
+                    $file->project_id = $project->id;
+                    $file->save();
+                    
+                    \Log::debug('TEST STORE - Project file created:', [
+                        'file_id' => $file->id,
+                        'file_name' => $file->name,
+                        'file_path' => $file->path,
+                        'project_id' => $file->project_id
+                    ]);
+                } catch (\Exception $fileEx) {
+                    \Log::error('TEST STORE - Failed to create project file:', [
+                        'error' => $fileEx->getMessage(),
+                        'trace' => $fileEx->getTraceAsString(),
+                        'file_data' => $fileData
+                    ]);
+                    throw $fileEx;
+                }
+            }
+
+            // Count the files that were actually saved
+            $fileCount = $project->files()->count();
+            \Log::debug('TEST STORE - Project files count after save:', [
+                'count' => $fileCount,
+                'queries' => DB::getQueryLog()
+            ]);
+
+            DB::commit();
+
+            \Log::debug('TEST STORE - Project and files saved successfully', [
+                'project_id' => $project->id,
+                'files_count' => $project->files()->count()
+            ]);
+
+            // Get the project with files to return in the response
+            $project = Project::with('files')->find($project->id);
+            $project->file_count = $project->files->count();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Test project created successfully',
+                'data' => $project
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            \Log::error('TEST STORE - Failed to create project:', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'queries' => DB::getQueryLog()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create test project',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }
