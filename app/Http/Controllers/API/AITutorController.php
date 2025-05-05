@@ -60,12 +60,25 @@ class AITutorController extends Controller
             $topic = null;
             if ($request->has('topic_id') && $request->topic_id) {
                 $topic = LearningTopic::find($request->topic_id);
+                if (!$topic) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Topic not found with ID: ' . $request->topic_id
+                    ], 404);
+                }
             }
 
             // Get the module if provided
             $module = null;
             if ($request->has('module_id') && $request->module_id) {
                 $module = LessonModule::with('lessonPlan')->find($request->module_id);
+                
+                if (!$module) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Module not found with ID: ' . $request->module_id
+                    ], 404);
+                }
                 
                 // If the module is found but no topic was specified, get the topic from the module's lesson plan
                 if ($module && !$topic && $module->lessonPlan) {
@@ -77,16 +90,31 @@ class AITutorController extends Controller
             $session = null;
             if ($request->has('session_id') && $request->session_id) {
                 $session = LearningSession::find($request->session_id);
+                if (!$session) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Session not found with ID: ' . $request->session_id
+                    ], 404);
+                }
             } else if ($topic) {
                 // Create a new session for this topic if none provided
                 $userId = Auth::id() ?? 1;
                 
-                $session = LearningSession::create([
-                    'user_id' => $userId,
-                    'topic_id' => $topic->id,
-                    'title' => 'Session on ' . $topic->title,
-                    'started_at' => now(),
-                ]);
+                try {
+                    $session = LearningSession::create([
+                        'user_id' => $userId,
+                        'topic_id' => $topic->id,
+                        'title' => 'Session on ' . $topic->title,
+                        'started_at' => now(),
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Failed to create new learning session', [
+                        'error' => $e->getMessage(),
+                        'user_id' => $userId,
+                        'topic_id' => $topic->id
+                    ]);
+                    // Continue without session if creation fails
+                }
             }
 
             // Initialize context for the AI tutor
@@ -97,84 +125,171 @@ class AITutorController extends Controller
                 $userId = Auth::id() ?? 1;
                 
                 // Track module progress
-                $moduleProgress = ModuleProgress::firstOrCreate(
-                    [
+                try {
+                    $moduleProgress = ModuleProgress::firstOrCreate(
+                        [
+                            'user_id' => $userId,
+                            'module_id' => $module->id
+                        ],
+                        [
+                            'status' => 'in_progress',
+                            'started_at' => now(),
+                            'last_activity_at' => now()
+                        ]
+                    );
+                    
+                    $moduleProgress->markAsStarted();
+                    
+                    // Add module content to context for the AI tutor
+                    $context = [
+                        'module_title' => $module->title,
+                        'module_content' => $module->content,
+                        'examples' => $module->examples,
+                        'key_points' => $module->key_points,
+                        'teaching_strategy' => $module->teaching_strategy,
+                        'common_misconceptions' => $module->common_misconceptions
+                    ];
+                    
+                    // Add guidance notes if they exist
+                    if ($module->guidance_notes) {
+                        $context['guidance_notes'] = $module->guidance_notes;
+                    }
+                    
+                    // Add any struggle points from previous interactions
+                    if ($moduleProgress->struggle_points) {
+                        $context['struggle_points'] = $moduleProgress->struggle_points;
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Failed to track module progress', [
+                        'error' => $e->getMessage(),
                         'user_id' => $userId,
                         'module_id' => $module->id
-                    ],
-                    [
-                        'status' => 'in_progress',
-                        'started_at' => now(),
-                        'last_activity_at' => now()
-                    ]
-                );
-                
-                $moduleProgress->markAsStarted();
-                
-                // Add module content to context for the AI tutor
-                $context = [
-                    'module_title' => $module->title,
-                    'module_content' => $module->content,
-                    'examples' => $module->examples,
-                    'key_points' => $module->key_points,
-                    'teaching_strategy' => $module->teaching_strategy,
-                    'common_misconceptions' => $module->common_misconceptions
-                ];
-                
-                // Add guidance notes if they exist
-                if ($module->guidance_notes) {
-                    $context['guidance_notes'] = $module->guidance_notes;
+                    ]);
+                    // Continue without module progress if tracking fails
                 }
-                
-                // Add any struggle points from previous interactions
-                if ($moduleProgress->struggle_points) {
-                    $context['struggle_points'] = $moduleProgress->struggle_points;
-                }
+            }
+
+            // Validate question before proceeding
+            if (empty($request->question) || !is_string($request->question)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid question format. Question must be a non-empty string.'
+                ], 400);
+            }
+
+            // Ensure preferences is an array
+            $preferences = $request->preferences ?? [];
+            if (!is_array($preferences)) {
+                $preferences = [];
+            }
+
+            // Ensure conversation_history is an array
+            $conversationHistory = $request->conversation_history ?? [];
+            if (!is_array($conversationHistory)) {
+                $conversationHistory = [];
             }
 
             // Get response from AI tutor
-            $response = $this->tutorService->getResponseWithContext(
-                $request->question,
-                $request->conversation_history ?? [],
-                $request->preferences ?? [],
-                $topic ? $topic->title : null,
-                $context
-            );
+            $isFallback = false;
+            $responseMessage = null;
+            
+            try {
+                $response = $this->tutorService->getResponseWithContext(
+                    $request->question,
+                    $conversationHistory,
+                    $preferences,
+                    $topic ? $topic->title : null,
+                    $context
+                );
+                
+                // Check if this is a fallback response (contains specific fallback phrases)
+                if (strpos($response, 'temporarily unavailable') !== false ||
+                    strpos($response, 'experiencing connectivity issues') !== false ||
+                    strpos($response, 'having trouble connecting') !== false) {
+                    $isFallback = true;
+                    $responseMessage = 'AI service temporarily unavailable';
+                    
+                    // Log that we received a fallback response
+                    Log::warning('Received fallback response from TutorService', [
+                        'response' => $response,
+                        'question' => $request->question
+                    ]);
+                }
+            } catch (\Exception $e) {
+                Log::error('AI Tutor service error', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                
+                // Create a simplified fallback response directly from the controller
+                $response = "The AI service is temporarily unavailable. Please try again in a few minutes.";
+                $isFallback = true;
+                $responseMessage = 'Error getting response from AI tutor: ' . $e->getMessage();
+            }
 
             // Save the chat message with both question and response
-            $userId = Auth::id() ?? 1;
-            
-            ChatMessage::create([
-                'user_id' => $userId,
-                'message' => $request->question,
-                'response' => $response,
-                'topic' => $topic ? $topic->title : null,
-                'topic_id' => $topic ? $topic->id : null,
-                'context' => !empty($context) ? json_encode($context) : null,
-                'conversation_history' => $request->conversation_history ?? [],
-                'preferences' => $request->preferences ?? [],
-            ]);
+            try {
+                $userId = Auth::id() ?? 1;
+                
+                ChatMessage::create([
+                    'user_id' => $userId,
+                    'message' => $request->question,
+                    'response' => $response,
+                    'topic' => $topic ? $topic->title : null,
+                    'topic_id' => $topic ? $topic->id : null,
+                    'context' => !empty($context) ? json_encode($context) : null,
+                    'conversation_history' => $request->conversation_history ?? [],
+                    'preferences' => $request->preferences ?? [],
+                    'is_fallback' => $isFallback,
+                ]);
+            } catch (\Exception $e) {
+                // Log the error but continue since this is not critical
+                Log::error('Failed to save chat message', [
+                    'error' => $e->getMessage(),
+                    'user_id' => $userId
+                ]);
+                // We don't need to return an error here as the main functionality worked
+            }
 
             // Update session last_activity if available
             if ($session) {
-                $session->update([
-                    'last_activity_at' => now(),
-                ]);
+                try {
+                    $session->update([
+                        'last_activity_at' => now(),
+                    ]);
+                } catch (\Exception $e) {
+                    // Log the error but continue
+                    Log::error('Failed to update session last_activity', [
+                        'error' => $e->getMessage(),
+                        'session_id' => $session->id
+                    ]);
+                }
             }
 
+            // Return the response to the client with appropriate status code
             return response()->json([
-                'status' => 'success',
+                'status' => $isFallback ? 'partial' : 'success',
+                'message' => $responseMessage,
                 'data' => [
                     'response' => $response,
                     'session_id' => $session ? $session->id : null,
+                    'is_fallback' => $isFallback
                 ]
-            ]);
+            ], $isFallback ? 206 : 200); // Use 206 Partial Content for fallback responses
+            
         } catch (\Exception $e) {
-            Log::error('Error in AI Tutor chat: ' . $e->getMessage());
+            Log::error('Error in AITutorController::chat', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'status' => 'error',
-                'message' => 'Error getting response from AI tutor',
-                'error' => $e->getMessage()
+                'message' => 'An unexpected error occurred: ' . $e->getMessage(),
+                'data' => [
+                    'response' => 'The AI service encountered an unexpected error. Please try again later.',
+                    'is_fallback' => true
+                ]
             ], 500);
         }
     }
