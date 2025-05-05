@@ -25,6 +25,14 @@ class TutorService
     public function getResponse($question, $conversationHistory, $preferences, $topic = null)
     {
         try {
+            // Make sure API key is loaded before each request
+            if (empty($this->apiKey)) {
+                $this->apiKey = config('services.together.api_key', env('TOGETHER_API_KEY', ''));
+                Log::info('TutorService::getResponse - Refreshing API key from config', [
+                    'apiKey_exists' => !empty($this->apiKey)
+                ]);
+            }
+
             Log::info('TutorService::getResponse - Starting request processing', [
                 'apiKey_exists' => !empty($this->apiKey),
                 'model' => $this->model,
@@ -194,6 +202,14 @@ class TutorService
     public function getResponseWithContext($question, $conversationHistory, $preferences, $topic = null, $context = [])
     {
         try {
+            // Make sure API key is loaded before each request
+            if (empty($this->apiKey)) {
+                $this->apiKey = config('services.together.api_key', env('TOGETHER_API_KEY', ''));
+                Log::info('TutorService::getResponseWithContext - Refreshing API key from config', [
+                    'apiKey_exists' => !empty($this->apiKey)
+                ]);
+            }
+
             Log::info('TutorService::getResponseWithContext - Starting request processing', [
                 'apiKey_exists' => !empty($this->apiKey),
                 'model' => $this->model,

@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'together' => [
+        'api_key' => env('TOGETHER_API_KEY', ''),
+        'api_url' => env('TOGETHER_API_URL', 'https://api.together.xyz/v1'),
+    ],
+
 ];
