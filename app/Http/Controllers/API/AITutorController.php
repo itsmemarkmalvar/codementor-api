@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\AI\TutorService;
+use App\Services\AI\GeminiService;
 use App\Services\AI\JavaExecutionService;
 use App\Models\ChatMessage;
 use App\Models\LearningSession;
@@ -23,14 +24,16 @@ use Illuminate\Support\Facades\Validator;
 class AITutorController extends Controller
 {
     protected $tutorService;
+    protected $geminiService;
     protected $javaExecutionService;
 
     /**
      * Create a new controller instance.
      */
-    public function __construct(TutorService $tutorService, JavaExecutionService $javaExecutionService)
+    public function __construct(TutorService $tutorService, GeminiService $geminiService, JavaExecutionService $javaExecutionService)
     {
         $this->tutorService = $tutorService;
+        $this->geminiService = $geminiService;
         $this->javaExecutionService = $javaExecutionService;
     }
 
@@ -194,13 +197,26 @@ class AITutorController extends Controller
             $responseMessage = null;
             
             try {
-                $response = $this->tutorService->getResponseWithContext(
-                    $request->question,
-                    $conversationHistory,
-                    $preferences,
-                    $topic ? $topic->title : null,
-                    $context
-                );
+                // Determine which AI service to use based on preferences
+                $model = isset($preferences['model']) ? strtolower($preferences['model']) : 'together';
+                
+                if ($model === 'gemini') {
+                    $response = $this->geminiService->getResponse(
+                        $request->question,
+                        $conversationHistory,
+                        $preferences,
+                        $topic ? $topic->title : null
+                    );
+                } else {
+                    // Default to Together AI
+                    $response = $this->tutorService->getResponseWithContext(
+                        $request->question,
+                        $conversationHistory,
+                        $preferences,
+                        $topic ? $topic->title : null,
+                        $context
+                    );
+                }
                 
                 // Check if this is a fallback response (contains specific fallback phrases)
                 if (strpos($response, 'temporarily unavailable') !== false ||
@@ -416,10 +432,25 @@ class AITutorController extends Controller
                     $feedbackContext = array_merge($feedbackContext, $exerciseContext);
                 }
                 
-                $aiFeedback = $this->tutorService->evaluateCodeWithContext(
-                    $request->code,
-                    $feedbackContext
-                );
+                // Determine which AI service to use based on preferences
+                $model = 'together';
+                if ($request->has('preferences') && is_array($request->preferences) && isset($request->preferences['model'])) {
+                    $model = strtolower($request->preferences['model']);
+                }
+                
+                if ($model === 'gemini') {
+                    $aiFeedback = $this->geminiService->evaluateCode(
+                        $request->code,
+                        $feedbackContext['stdout'] ?? '',
+                        $feedbackContext['stderr'] ?? '',
+                        $feedbackContext['topic'] ?? null
+                    );
+                } else {
+                    $aiFeedback = $this->tutorService->evaluateCodeWithContext(
+                        $request->code,
+                        $feedbackContext
+                    );
+                }
             }
 
             // Save the code to session history if provided
@@ -601,10 +632,25 @@ class AITutorController extends Controller
                     $feedbackContext = array_merge($feedbackContext, $exerciseContext);
                 }
                 
-                $aiFeedback = $this->tutorService->evaluateCodeWithContext(
-                    $mainCode, // Pass the main file content
-                    $feedbackContext
-                );
+                // Determine which AI service to use based on preferences
+                $model = 'together';
+                if ($request->has('preferences') && is_array($request->preferences) && isset($request->preferences['model'])) {
+                    $model = strtolower($request->preferences['model']);
+                }
+                
+                if ($model === 'gemini') {
+                    $aiFeedback = $this->geminiService->evaluateCode(
+                        $mainCode,
+                        $feedbackContext['stdout'] ?? '',
+                        $feedbackContext['stderr'] ?? '',
+                        $feedbackContext['topic'] ?? null
+                    );
+                } else {
+                    $aiFeedback = $this->tutorService->evaluateCodeWithContext(
+                        $mainCode, // Pass the main file content
+                        $feedbackContext
+                    );
+                }
             }
 
             // Save the project to session history if provided
