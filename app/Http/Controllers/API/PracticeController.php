@@ -13,6 +13,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class PracticeController extends Controller
 {
@@ -26,6 +29,30 @@ class PracticeController extends Controller
     {
         $this->javaExecutionService = $javaExecutionService;
         $this->tutorService = $tutorService;
+    }
+
+    /**
+     * Get or create a user ID for guest users
+     */
+    private function getOrCreateUserId(Request $request)
+    {
+        // If user is authenticated, use their ID
+        if (Auth::check()) {
+            return Auth::id();
+        }
+
+        // For guest users, try to get from cookie first
+        $guestUserId = $request->cookie('guest_user_id');
+        
+        if (!$guestUserId) {
+            // Create a new guest user ID
+            $guestUserId = 'guest_' . Str::random(8);
+            
+            // Set cookie for 24 hours
+            cookie()->queue('guest_user_id', $guestUserId, 60 * 24);
+        }
+        
+        return $guestUserId;
     }
 
     /**
@@ -209,8 +236,8 @@ class PracticeController extends Controller
         try {
             $problem = PracticeProblem::findOrFail($id);
             
-            // Get user ID (use 1 for demo if not authenticated)
-            $userId = Auth::id() ?? 1;
+            // Get user ID (authenticated user or session-based guest user)
+            $userId = $this->getOrCreateUserId($request);
             
             // Count previous attempts
             $attemptNumber = PracticeAttempt::where('user_id', $userId)
@@ -330,8 +357,8 @@ class PracticeController extends Controller
         try {
             $problem = PracticeProblem::findOrFail($id);
             
-            // Get user ID (use 1 for demo if not authenticated)
-            $userId = Auth::id() ?? 1;
+            // Get user ID (authenticated user or session-based guest user)
+            $userId = $this->getOrCreateUserId($request);
             
             // Get next hint
             $hint = $problem->getProgressiveHint($userId, true);
@@ -394,12 +421,12 @@ class PracticeController extends Controller
                 'problem_difficulty' => $problem->difficulty_level,
                 'user_code' => $attempt->submitted_code,
                 'execution_time' => $attempt->execution_time_ms,
-                'solution_code' => $problem->solution_code
+                'solution_code' => $problem->solution_code,
+                'result_type' => 'success'
             ];
             
-            $feedback = $this->tutorService->getCodeFeedback(
+            $feedback = $this->tutorService->evaluateCodeWithContext(
                 $attempt->submitted_code,
-                'success',
                 $context
             );
             
@@ -426,10 +453,9 @@ class PracticeController extends Controller
                 'struggle_points' => $attempt->struggle_points
             ];
             
-            $feedback = $this->tutorService->getCodeFeedback(
+            $feedback = $this->tutorService->evaluateCodeWithContext(
                 $attempt->submitted_code,
-                'error',
-                $context
+                array_merge($context, ['result_type' => 'error'])
             );
             
             return $feedback;
@@ -522,8 +548,8 @@ class PracticeController extends Controller
     public function getSuggestedResources(Request $request, $id)
     {
         try {
-            // Get user ID (use 1 for demo if not authenticated)
-            $userId = Auth::id() ?? 1;
+            // Get user ID (authenticated user or session-based guest user)
+            $userId = $this->getOrCreateUserId($request);
             
             $attempt = PracticeAttempt::where('user_id', $userId)
                 ->where('problem_id', $id)
@@ -601,5 +627,302 @@ class PracticeController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Get all practice data efficiently in a single request.
+     * This includes topics, lesson plans, modules, and exercises with proper eager loading.
+     */
+    public function getAllPracticeData()
+    {
+        try {
+            // Try to get data from cache first
+            $cacheKey = 'practice_all_data';
+            $data = Cache::remember($cacheKey, now()->addHours(1), function () {
+                return PracticeCategory::with([
+                    'problems' => function ($query) {
+                        $query->orderBy('difficulty_level')
+                              ->orderBy('success_rate', 'desc');
+                    },
+                    'problems.resources' => function ($query) {
+                        $query->orderBy('rating', 'desc');
+                    },
+                    'subcategories' => function ($query) {
+                        $query->where('is_active', true)
+                              ->orderBy('display_order');
+                    }
+                ])
+                ->where('is_active', true)
+                ->orderBy('display_order')
+                ->get()
+                ->map(function ($category) {
+                    return [
+                        'id' => $category->id,
+                        'name' => $category->name,
+                        'description' => $category->description,
+                        'icon' => $category->icon,
+                        'color' => $category->color,
+                        'required_level' => $category->required_level,
+                        'problem_counts' => $category->getProblemCountsByDifficulty(),
+                        'total_problems' => $category->problems->count(),
+                        'problems' => $category->problems->map(function ($problem) {
+                            return [
+                                'id' => $problem->id,
+                                'title' => $problem->title,
+                                'description' => $problem->description,
+                                'difficulty_level' => $problem->difficulty_level,
+                                'points' => $problem->points,
+                                'estimated_time_minutes' => $problem->estimated_time_minutes,
+                                'complexity_tags' => $problem->complexity_tags,
+                                'topic_tags' => $problem->topic_tags,
+                                'learning_concepts' => $problem->learning_concepts,
+                                'success_rate' => $problem->success_rate,
+                                'resources' => $problem->resources->map(function ($resource) {
+                                    return [
+                                        'id' => $resource->id,
+                                        'title' => $resource->title,
+                                        'description' => $resource->description,
+                                        'type' => $resource->type,
+                                        'url' => $resource->url,
+                                        'rating' => $resource->rating
+                                    ];
+                                })
+                            ];
+                        }),
+                        'subcategories' => $category->subcategories->map(function ($subcategory) {
+                            return [
+                                'id' => $subcategory->id,
+                                'name' => $subcategory->name,
+                                'description' => $subcategory->description,
+                                'icon' => $subcategory->icon,
+                                'color' => $subcategory->color
+                            ];
+                        })
+                    ];
+                });
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $data
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching practice data: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error fetching practice data',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Clear the practice data cache.
+     * This should be called whenever practice data is updated.
+     */
+    public function clearPracticeDataCache()
+    {
+        try {
+            Cache::forget('practice_all_data');
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Practice data cache cleared successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error clearing practice data cache: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error clearing practice data cache',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Initialize user session and return user identifier
+     */
+    public function initializeUserSession(Request $request)
+    {
+        try {
+            $userId = $this->getOrCreateUserId($request);
+            
+            // Set session start time in cache for tracking (24 hours)
+            $sessionKey = 'session_start_' . $userId;
+            if (!Cache::has($sessionKey)) {
+                Cache::put($sessionKey, now(), 60 * 24);
+            }
+            
+            // Get basic user stats
+            $stats = $this->getUserStats($request, $userId);
+            
+            $response = response()->json([
+                'status' => 'success',
+                'data' => [
+                    'user_id' => $userId,
+                    'is_authenticated' => Auth::check(),
+                    'is_guest' => !Auth::check(),
+                    'stats' => $stats
+                ]
+            ]);
+            
+            // Set cookie if it's a new guest user
+            if (!Auth::check() && !$request->cookie('guest_user_id')) {
+                $response->cookie('guest_user_id', $userId, 60 * 24);
+            }
+            
+            return $response;
+        } catch (\Exception $e) {
+            Log::error('Error initializing user session: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error initializing user session',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get user session statistics
+     */
+    public function getUserSessionStats(Request $request)
+    {
+        try {
+            $userId = $this->getOrCreateUserId($request);
+            $stats = $this->getUserStats($request, $userId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'user_id' => $userId,
+                    'is_authenticated' => Auth::check(),
+                    'is_guest' => !Auth::check(),
+                    'stats' => $stats
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting user session stats: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error getting user session stats',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Send signup prompt for guest users with good progress
+     */
+    public function sendSignupPrompt(Request $request)
+    {
+        try {
+            // Only for guest users
+            if (Auth::check()) {
+                return response()->json([
+                    'status' => 'info',
+                    'message' => 'User is already authenticated'
+                ]);
+            }
+
+            $userId = $this->getOrCreateUserId($request);
+            $stats = $this->getUserStats($request, $userId);
+            
+            // Determine if user should be prompted to sign up
+            $shouldPrompt = $stats['problems_solved'] >= 2 || 
+                          $stats['total_attempts'] >= 5 ||
+                          $stats['session_time_minutes'] >= 15;
+            
+            if ($shouldPrompt) {
+                return response()->json([
+                    'status' => 'success',
+                    'data' => [
+                        'should_prompt' => true,
+                        'message' => 'Great progress! Sign up to save your achievements and continue your learning journey.',
+                        'benefits' => [
+                            'Save your progress permanently',
+                            'Get personalized learning recommendations',
+                            'Track your skill development over time',
+                            'Access advanced features and challenges'
+                        ],
+                        'stats' => $stats
+                    ]
+                ]);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'should_prompt' => false,
+                    'stats' => $stats
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error sending signup prompt: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error sending signup prompt',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get comprehensive user statistics
+     */
+    private function getUserStats(Request $request, $userId)
+    {
+        $attempts = PracticeAttempt::where('user_id', $userId)->get();
+        
+        // Get session start time from cache
+        $sessionKey = 'session_start_' . $userId;
+        $sessionStartTime = Cache::get($sessionKey, now());
+        $sessionTime = now()->diffInMinutes($sessionStartTime);
+        
+        return [
+            'total_attempts' => $attempts->count(),
+            'problems_solved' => $attempts->where('is_correct', true)->count(),
+            'total_points' => $attempts->sum('points_earned'),
+            'success_rate' => $attempts->count() > 0 ? 
+                ($attempts->where('is_correct', true)->count() / $attempts->count()) * 100 : 0,
+            'session_time_minutes' => $sessionTime,
+            'session_start' => $sessionStartTime,
+            'last_activity' => $attempts->max('created_at'),
+            'difficulty_breakdown' => $this->getDifficultyBreakdown($attempts),
+            'recent_activity' => $attempts->sortByDesc('created_at')->take(5)->values()->map(function($attempt) {
+                return [
+                    'problem_id' => $attempt->problem_id,
+                    'problem_title' => $attempt->problem->title ?? 'Unknown',
+                    'is_correct' => $attempt->is_correct,
+                    'points_earned' => $attempt->points_earned,
+                    'created_at' => $attempt->created_at
+                ];
+            })
+        ];
+    }
+
+    /**
+     * Get difficulty level breakdown for user stats
+     */
+    private function getDifficultyBreakdown($attempts)
+    {
+        $breakdown = [
+            'beginner' => ['attempted' => 0, 'solved' => 0],
+            'intermediate' => ['attempted' => 0, 'solved' => 0],
+            'advanced' => ['attempted' => 0, 'solved' => 0],
+            'expert' => ['attempted' => 0, 'solved' => 0]
+        ];
+        
+        foreach ($attempts as $attempt) {
+            if ($attempt->problem) {
+                $difficulty = $attempt->problem->difficulty_level;
+                if (isset($breakdown[$difficulty])) {
+                    $breakdown[$difficulty]['attempted']++;
+                    if ($attempt->is_correct) {
+                        $breakdown[$difficulty]['solved']++;
+                    }
+                }
+            }
+        }
+        
+        return $breakdown;
     }
 } 

@@ -37,6 +37,9 @@ class DatabaseSeeder extends Seeder
         // Update Java lesson plan hierarchy and prerequisites
         $this->call(UpdateJavaLessonPlanOrder::class);
         
+        // Seed practice categories and problems
+        $this->call(PracticeSeeder::class);
+        
         // Seed practice resources and their associations with practice problems
         $this->call(PracticeResourceSeeder::class);
     }

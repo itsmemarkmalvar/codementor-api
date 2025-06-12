@@ -125,10 +125,22 @@ Route::get('/exercises/{id}', [LessonController::class, 'getExercise']);
 // Debug route for all lesson plans
 Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);
 
-// Practice API routes
-Route::get('/practice/categories', [PracticeController::class, 'getCategories']);
-Route::get('/practice/categories/{id}/problems', [PracticeController::class, 'getProblemsByCategory']);
-Route::get('/practice/problems/{id}', [PracticeController::class, 'getProblem']);
+// Public practice routes (for demo and guest users)
+Route::prefix('practice')->group(function () {
+    Route::get('/categories', [PracticeController::class, 'getCategories']);
+    Route::get('/categories/{categoryId}/problems', [PracticeController::class, 'getProblemsByCategory']);
+    Route::get('/problems/{id}', [PracticeController::class, 'getProblem']);
+    Route::post('/problems/{id}/solution', [PracticeController::class, 'submitSolution']);
+    Route::get('/problems/{id}/hint', [PracticeController::class, 'getHint']);
+    Route::get('/problems/{id}/resources', [PracticeController::class, 'getProblemResources']);
+    Route::get('/problems/{id}/resources/suggestions', [PracticeController::class, 'getSuggestedResources']);
+    Route::get('/all-data', [PracticeController::class, 'getAllPracticeData']);
+    
+    // User session and statistics
+    Route::post('/session/init', [PracticeController::class, 'initializeUserSession']);
+    Route::get('/session/stats', [PracticeController::class, 'getUserSessionStats']);
+    Route::post('/session/signup-prompt', [PracticeController::class, 'sendSignupPrompt']);
+});
 
 // Test routes for development only (REMOVE IN PRODUCTION)
 Route::post('/test-projects', [ProjectController::class, 'testStore']);
@@ -206,9 +218,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/users/quizzes', [QuizController::class, 'getUserQuizzes']);
     Route::post('/tutor/analyze-quiz-results', [AITutorController::class, 'analyzeQuizResults']);
     
-    // Practice routes
-    Route::post('/practice/problems/{id}/solution', [PracticeController::class, 'submitSolution']);
-    Route::get('/practice/problems/{id}/hint', [PracticeController::class, 'getHint']);
+    // Practice routes (admin only)
     Route::get('/practice/problems/{id}/resources', [PracticeController::class, 'getSuggestedResources']);
     Route::get('/practice/problems/{id}/linked-resources', [PracticeController::class, 'getProblemResources']);
     Route::post('/practice/problems/{id}/resources', [PracticeController::class, 'associateResources']);

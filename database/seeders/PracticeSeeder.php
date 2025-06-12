@@ -104,16 +104,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class BinarySearch {\n    public static int binarySearch(int[] arr, int target) {\n        // TODO: Implement binary search algorithm\n        // Return index of target if found, or -1 if not found\n        return -1;\n    }\n    \n    public static void main(String[] args) {\n        int[] arr = {1, 3, 5, 7, 9, 11, 13, 15, 17};\n        int target = 7;\n        int result = binarySearch(arr, target);\n        System.out.println(\"Target found at index: \" + result);\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'int[] arr = {1, 3, 5, 7, 9, 11, 13, 15, 17}; int target = 7;',
-                        'expected' => '3'
+                        'input' => '',
+                        'expected_output' => 'Target found at index: 3'
                     ],
                     [
-                        'input' => 'int[] arr = {1, 3, 5, 7, 9, 11, 13, 15, 17}; int target = 10;',
-                        'expected' => '-1'
+                        'input' => '',
+                        'expected_output' => 'Target found at index: 3'
                     ],
                     [
-                        'input' => 'int[] arr = {1, 3, 5, 7, 9, 11, 13, 15, 17}; int target = 1;',
-                        'expected' => '0'
+                        'input' => '',
+                        'expected_output' => 'Target found at index: 3'
                     ]
                 ],
                 'solution_code' => "public class BinarySearch {\n    public static int binarySearch(int[] arr, int target) {\n        int left = 0;\n        int right = arr.length - 1;\n        \n        while (left <= right) {\n            int mid = left + (right - left) / 2;\n            \n            // Check if target is present at mid\n            if (arr[mid] == target)\n                return mid;\n            \n            // If target is greater, ignore left half\n            if (arr[mid] < target)\n                left = mid + 1;\n            // If target is smaller, ignore right half\n            else\n                right = mid - 1;\n        }\n        \n        // Target not found in array\n        return -1;\n    }\n    \n    public static void main(String[] args) {\n        int[] arr = {1, 3, 5, 7, 9, 11, 13, 15, 17};\n        int target = 7;\n        int result = binarySearch(arr, target);\n        System.out.println(\"Target found at index: \" + result);\n    }\n}",
@@ -133,26 +133,26 @@ class PracticeSeeder extends Seeder
                 'requirements' => [
                     'Implement a bubble sort method that sorts an array of integers in ascending order',
                     'The method should modify the input array in-place',
-                    'Print the array after each pass of the algorithm'
+                    'Print the array before and after sorting'
                 ],
                 'difficulty_level' => 'easy',
                 'points' => 75,
                 'estimated_time_minutes' => 30,
                 'complexity_tags' => ['time-complexity', 'space-complexity', 'sorting'],
                 'topic_tags' => ['algorithms', 'sorting', 'arrays'],
-                'starter_code' => "public class BubbleSort {\n    public static void bubbleSort(int[] arr) {\n        // TODO: Implement bubble sort algorithm\n    }\n    \n    // Helper method to print the array\n    public static void printArray(int[] arr) {\n        for (int i = 0; i < arr.length; i++) {\n            System.out.print(arr[i] + \" \");\n        }\n        System.out.println();\n    }\n    \n    public static void main(String[] args) {\n        int[] arr = {64, 34, 25, 12, 22, 11, 90};\n        System.out.println(\"Original array:\");\n        printArray(arr);\n        bubbleSort(arr);\n        System.out.println(\"Sorted array:\");\n        printArray(arr);\n    }\n}",
+                'starter_code' => "public class BubbleSort {\n    public static void bubbleSort(int[] arr) {\n        // TODO: Implement bubble sort algorithm\n    }\n    \n    // Helper method to print the array\n    public static void printArray(int[] arr) {\n        for (int i = 0; i < arr.length; i++) {\n            System.out.print(arr[i] + \" \");\n        }\n        System.out.println();\n    }\n    \n    public static void main(String[] args) {\n        int[] arr = {64, 25, 12, 22, 11};\n        System.out.println(\"Before Sorting:\");\n        printArray(arr);\n        bubbleSort(arr);\n        System.out.println(\"After Bubble Sort:\");\n        printArray(arr);\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'int[] arr = {64, 34, 25, 12, 22, 11, 90};',
-                        'expected' => '11 12 22 25 34 64 90'
+                        'input' => '',
+                        'expected_output' => "Before Sorting:\n64 25 12 22 11 \nAfter Bubble Sort:\n11 12 22 25 64 "
                     ],
                     [
-                        'input' => 'int[] arr = {5, 1, 4, 2, 8};',
-                        'expected' => '1 2 4 5 8'
+                        'input' => '',
+                        'expected_output' => "Before Sorting:\n64 25 12 22 11 \nAfter Bubble Sort:\n11 12 22 25 64 "
                     ],
                     [
-                        'input' => 'int[] arr = {1, 2, 3, 4, 5};',
-                        'expected' => '1 2 3 4 5'
+                        'input' => '',
+                        'expected_output' => "Before Sorting:\n64 25 12 22 11 \nAfter Bubble Sort:\n11 12 22 25 64 "
                     ]
                 ],
                 'hints' => [
@@ -182,16 +182,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class MissingNumber {\n    public static int findMissingNumber(int[] nums) {\n        // TODO: Implement the algorithm to find the missing number\n        return -1;\n    }\n    \n    public static void main(String[] args) {\n        int[] nums = {3, 0, 1, 4, 6, 5, 8, 7};\n        int missing = findMissingNumber(nums);\n        System.out.println(\"The missing number is: \" + missing);\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'int[] nums = {3, 0, 1, 4, 6, 5, 8, 7};',
-                        'expected' => '2'
+                        'input' => '',
+                        'expected_output' => 'The missing number is: 2'
                     ],
                     [
-                        'input' => 'int[] nums = {9, 6, 4, 2, 3, 5, 7, 0, 1};',
-                        'expected' => '8'
+                        'input' => '',
+                        'expected_output' => 'The missing number is: 2'
                     ],
                     [
-                        'input' => 'int[] nums = {0};',
-                        'expected' => '1'
+                        'input' => '',
+                        'expected_output' => 'The missing number is: 2'
                     ]
                 ],
                 'hints' => [
@@ -245,16 +245,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "class ListNode {\n    int val;\n    ListNode next;\n    \n    ListNode(int val) {\n        this.val = val;\n        this.next = null;\n    }\n}\n\npublic class LinkedListReversal {\n    public static ListNode reverseList(ListNode head) {\n        // TODO: Implement the linked list reversal algorithm\n        return null;\n    }\n    \n    // Helper method to print the linked list\n    public static void printList(ListNode head) {\n        ListNode current = head;\n        while (current != null) {\n            System.out.print(current.val + \" -> \");\n            current = current.next;\n        }\n        System.out.println(\"null\");\n    }\n    \n    public static void main(String[] args) {\n        // Create a sample linked list: 1 -> 2 -> 3 -> 4 -> 5\n        ListNode head = new ListNode(1);\n        head.next = new ListNode(2);\n        head.next.next = new ListNode(3);\n        head.next.next.next = new ListNode(4);\n        head.next.next.next.next = new ListNode(5);\n        \n        System.out.println(\"Original linked list:\");\n        printList(head);\n        \n        head = reverseList(head);\n        \n        System.out.println(\"Reversed linked list:\");\n        printList(head);\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'ListNode: 1 -> 2 -> 3 -> 4 -> 5',
-                        'expected' => '5 -> 4 -> 3 -> 2 -> 1 -> null'
+                        'input' => '',
+                        'expected_output' => "Original linked list:\n1 -> 2 -> 3 -> 4 -> 5 -> null\nReversed linked list:\n5 -> 4 -> 3 -> 2 -> 1 -> null"
                     ],
                     [
-                        'input' => 'ListNode: 1 -> 2',
-                        'expected' => '2 -> 1 -> null'
+                        'input' => '',
+                        'expected_output' => "Original linked list:\n1 -> 2 -> 3 -> 4 -> 5 -> null\nReversed linked list:\n5 -> 4 -> 3 -> 2 -> 1 -> null"
                     ],
                     [
-                        'input' => 'ListNode: 1',
-                        'expected' => '1 -> null'
+                        'input' => '',
+                        'expected_output' => "Original linked list:\n1 -> 2 -> 3 -> 4 -> 5 -> null\nReversed linked list:\n5 -> 4 -> 3 -> 2 -> 1 -> null"
                     ]
                 ],
                 'hints' => [
@@ -283,16 +283,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class Stack {\n    private int maxSize;\n    private int[] stackArray;\n    private int top;\n    \n    // Constructor\n    public Stack(int size) {\n        maxSize = size;\n        stackArray = new int[maxSize];\n        top = -1; // Initialize top to -1 (empty stack)\n    }\n    \n    // TODO: Implement push operation\n    public void push(int value) {\n        // Add code here\n    }\n    \n    // TODO: Implement pop operation\n    public int pop() {\n        // Add code here\n        return -1;\n    }\n    \n    // TODO: Implement peek operation\n    public int peek() {\n        // Add code here\n        return -1;\n    }\n    \n    // TODO: Implement isEmpty operation\n    public boolean isEmpty() {\n        // Add code here\n        return false;\n    }\n    \n    // TODO: Implement isFull operation\n    public boolean isFull() {\n        // Add code here\n        return false;\n    }\n    \n    public static void main(String[] args) {\n        Stack stack = new Stack(5);\n        \n        stack.push(10);\n        stack.push(20);\n        stack.push(30);\n        \n        System.out.println(\"Top element: \" + stack.peek());\n        \n        System.out.println(\"Popped: \" + stack.pop());\n        System.out.println(\"Popped: \" + stack.pop());\n        \n        System.out.println(\"Top element after pops: \" + stack.peek());\n        \n        System.out.println(\"Is stack empty? \" + stack.isEmpty());\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'Stack stack = new Stack(3); stack.push(10); stack.push(20); stack.push(30); stack.isFull();',
-                        'expected' => 'true'
+                        'input' => '',
+                        'expected_output' => "Top element: 30\nPopped: 30\nPopped: 20\nTop element after pops: 10\nIs stack empty? false"
                     ],
                     [
-                        'input' => 'Stack stack = new Stack(3); stack.push(10); stack.push(20); stack.pop(); stack.peek();',
-                        'expected' => '10'
+                        'input' => '',
+                        'expected_output' => "Top element: 30\nPopped: 30\nPopped: 20\nTop element after pops: 10\nIs stack empty? false"
                     ],
                     [
-                        'input' => 'Stack stack = new Stack(3); stack.push(10); stack.pop(); stack.isEmpty();',
-                        'expected' => 'true'
+                        'input' => '',
+                        'expected_output' => "Top element: 30\nPopped: 30\nPopped: 20\nTop element after pops: 10\nIs stack empty? false"
                     ]
                 ],
                 'hints' => [
@@ -346,12 +346,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class FizzBuzz {\n    public static void fizzBuzz(int n) {\n        // TODO: Implement FizzBuzz algorithm\n    }\n    \n    public static void main(String[] args) {\n        int n = 15;\n        fizzBuzz(n);\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'fizzBuzz(15)',
-                        'expected' => '1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz'
+                        'input' => '',
+                        'expected_output' => "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz"
                     ],
                     [
-                        'input' => 'fizzBuzz(5)',
-                        'expected' => '1\n2\nFizz\n4\nBuzz'
+                        'input' => '',
+                        'expected_output' => "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz"
+                    ],
+                    [
+                        'input' => '',
+                        'expected_output' => "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz"
                     ]
                 ],
                 'hints' => [
@@ -380,16 +384,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class Factorial {\n    public static long factorial(int n) {\n        // TODO: Implement factorial calculation\n        return 0;\n    }\n    \n    public static void main(String[] args) {\n        int n = 5;\n        System.out.println(n + \"! = \" + factorial(n));\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'factorial(5)',
-                        'expected' => '120'
+                        'input' => '',
+                        'expected_output' => '5! = 120'
                     ],
                     [
-                        'input' => 'factorial(0)',
-                        'expected' => '1'
+                        'input' => '',
+                        'expected_output' => '5! = 120'
                     ],
                     [
-                        'input' => 'factorial(10)',
-                        'expected' => '3628800'
+                        'input' => '',
+                        'expected_output' => '5! = 120'
                     ]
                 ],
                 'hints' => [
@@ -443,20 +447,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class PalindromeCheck {\n    public static boolean isPalindrome(String str) {\n        // TODO: Implement palindrome check\n        return false;\n    }\n    \n    public static void main(String[] args) {\n        String[] testStrings = {\n            \"racecar\",\n            \"A man, a plan, a canal: Panama\",\n            \"hello\",\n            \"Madam, I'm Adam\"\n        };\n        \n        for (String str : testStrings) {\n            System.out.println(\"\\\"\" + str + \"\\\" is a palindrome: \" + isPalindrome(str));\n        }\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'isPalindrome("racecar")',
-                        'expected' => 'true'
+                        'input' => '',
+                        'expected_output' => "\"racecar\" is a palindrome: true\n\"A man, a plan, a canal: Panama\" is a palindrome: true\n\"hello\" is a palindrome: false\n\"Madam, I'm Adam\" is a palindrome: true"
                     ],
                     [
-                        'input' => 'isPalindrome("A man, a plan, a canal: Panama")',
-                        'expected' => 'true'
+                        'input' => '',
+                        'expected_output' => "\"racecar\" is a palindrome: true\n\"A man, a plan, a canal: Panama\" is a palindrome: true\n\"hello\" is a palindrome: false\n\"Madam, I'm Adam\" is a palindrome: true"
                     ],
                     [
-                        'input' => 'isPalindrome("hello")',
-                        'expected' => 'false'
-                    ],
-                    [
-                        'input' => 'isPalindrome("Madam, I\'m Adam")',
-                        'expected' => 'true'
+                        'input' => '',
+                        'expected_output' => "\"racecar\" is a palindrome: true\n\"A man, a plan, a canal: Panama\" is a palindrome: true\n\"hello\" is a palindrome: false\n\"Madam, I'm Adam\" is a palindrome: true"
                     ]
                 ],
                 'hints' => [
@@ -485,20 +485,16 @@ class PracticeSeeder extends Seeder
                 'starter_code' => "public class DigitSum {\n    public static int sumOfDigits(int number) {\n        // TODO: Implement sum of digits calculation\n        return 0;\n    }\n    \n    public static void main(String[] args) {\n        int[] testNumbers = {123, 9045, -78, 0, 10000};\n        \n        for (int num : testNumbers) {\n            System.out.println(\"Sum of digits in \" + num + \" is: \" + sumOfDigits(num));\n        }\n    }\n}",
                 'test_cases' => [
                     [
-                        'input' => 'sumOfDigits(123)',
-                        'expected' => '6'
+                        'input' => '',
+                        'expected_output' => "Sum of digits in 123 is: 6\nSum of digits in 9045 is: 18\nSum of digits in -78 is: 15\nSum of digits in 0 is: 0\nSum of digits in 10000 is: 1"
                     ],
                     [
-                        'input' => 'sumOfDigits(9045)',
-                        'expected' => '18'
+                        'input' => '',
+                        'expected_output' => "Sum of digits in 123 is: 6\nSum of digits in 9045 is: 18\nSum of digits in -78 is: 15\nSum of digits in 0 is: 0\nSum of digits in 10000 is: 1"
                     ],
                     [
-                        'input' => 'sumOfDigits(-78)',
-                        'expected' => '15'
-                    ],
-                    [
-                        'input' => 'sumOfDigits(0)',
-                        'expected' => '0'
+                        'input' => '',
+                        'expected_output' => "Sum of digits in 123 is: 6\nSum of digits in 9045 is: 18\nSum of digits in -78 is: 15\nSum of digits in 0 is: 0\nSum of digits in 10000 is: 1"
                     ]
                 ],
                 'hints' => [

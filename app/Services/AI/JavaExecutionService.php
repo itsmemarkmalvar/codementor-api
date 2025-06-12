@@ -26,6 +26,108 @@ class JavaExecutionService
     }
     
     /**
+     * Execute Java code with test cases for practice problems
+     *
+     * @param string $code The Java code to execute
+     * @param string|null $input Optional input to provide to the program
+     * @param array|null $testCases Array of test cases to run
+     * @return array The execution result with test case results
+     */
+    public function execute(string $code, ?string $input = null, ?array $testCases = null): array
+    {
+        try {
+            // If no test cases provided, just execute the code normally
+            if (!$testCases || empty($testCases)) {
+                return $this->executeJavaCode($code, $input);
+            }
+            
+            // Extract the class name from the code
+            $className = $this->extractClassName($code);
+            
+            if (!$className) {
+                return [
+                    'error' => 'Could not determine class name from code. Make sure you have a public class declaration.',
+                    'execution_time' => 0,
+                ];
+            }
+            
+            // Create a unique directory for this execution
+            $executionId = Str::uuid()->toString();
+            $executionDir = $this->tempDir . '/' . $executionId;
+            File::makeDirectory($executionDir, 0755, true);
+            
+            // Write the code to a file
+            $filePath = $executionDir . '/' . $className . '.java';
+            File::put($filePath, $code);
+            
+            // Compile the code
+            $compileResult = $this->compileJavaCode($filePath, $executionDir);
+            
+            if (!$compileResult['success']) {
+                $this->cleanUp($executionDir);
+                return [
+                    'error' => $compileResult['stderr'],
+                    'execution_time' => 0,
+                ];
+            }
+            
+            // Run test cases
+            $testResults = [];
+            $allPassed = true;
+            
+            foreach ($testCases as $index => $testCase) {
+                $testInput = $testCase['input'] ?? '';
+                $expectedOutput = trim($testCase['expected_output'] ?? '');
+                
+                // Write test input to file
+                $inputFile = null;
+                if (!empty($testInput)) {
+                    $inputFile = $executionDir . '/test_input_' . $index . '.txt';
+                    File::put($inputFile, $testInput);
+                }
+                
+                // Execute with this test case
+                $result = $this->runJavaCode($className, $executionDir, $inputFile);
+                
+                $actualOutput = trim($result['stdout'] ?? '');
+                $passed = ($actualOutput === $expectedOutput) && $result['success'];
+                
+                $testResults[] = [
+                    'passed' => $passed,
+                    'expected' => $expectedOutput,
+                    'actual' => $actualOutput,
+                    'error' => $result['stderr'] ?? null
+                ];
+                
+                if (!$passed) {
+                    $allPassed = false;
+                }
+                
+                // Clean up test input file
+                if ($inputFile && File::exists($inputFile)) {
+                    File::delete($inputFile);
+                }
+            }
+            
+            // Clean up temporary files
+            $this->cleanUp($executionDir);
+            
+            return [
+                'success' => $allPassed,
+                'test_results' => $testResults,
+                'execution_time' => 0, // We can add timing if needed
+            ];
+            
+        } catch (Exception $e) {
+            Log::error('Java execution error: ' . $e->getMessage());
+            return [
+                'error' => 'An error occurred during code execution: ' . $e->getMessage(),
+                'execution_time' => 0,
+            ];
+        }
+    }
+
+    /**
      * Execute Java code and return the result
      *
      * @param string $code The Java code to execute
