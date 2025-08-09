@@ -746,12 +746,12 @@ class AITutorController extends Controller
         
         $validator = Validator::make($request->all(), [
             'topic_id' => 'required|exists:learning_topics,id',
-            'progress_percentage' => 'required|integer|min:0|max:100',
+            // progress_percentage will be computed server-side
             'status' => 'nullable|string|in:not_started,in_progress,completed',
             'time_spent_minutes' => 'nullable|integer|min:0',
             'exercises_completed' => 'nullable|integer|min:0',
             'exercises_total' => 'nullable|integer|min:0',
-            'completed_subtopics' => 'required|string',  // Now we expect a JSON string
+            'completed_subtopics' => 'nullable|string',
             'progress_data' => 'nullable|string',
         ]);
 
@@ -862,9 +862,44 @@ class AITutorController extends Controller
                 $completedAt = now();
             }
             
+            // Merge progress_data (JSON string) into cumulative map
+            $currentData = [];
+            if ($progress && $progress->progress_data) {
+                $decoded = json_decode($progress->progress_data, true);
+                if (is_array($decoded)) { $currentData = $decoded; }
+            }
+            $incomingData = [];
+            if ($request->has('progress_data') && is_string($request->progress_data)) {
+                $decodedIncoming = json_decode($request->progress_data, true);
+                if (is_array($decodedIncoming)) { $incomingData = $decodedIncoming; }
+            }
+            foreach ($incomingData as $k => $v) {
+                if (!is_numeric($v)) { continue; }
+                $currentData[$k] = (isset($currentData[$k]) && is_numeric($currentData[$k]))
+                    ? ($currentData[$k] + $v)
+                    : $v;
+            }
+
+            // Compute weighted progress exactly as specified
+            $interactionPoints = (int) floor(($currentData['interaction'] ?? 0));
+            $codePoints = (int) floor(($currentData['code_execution'] ?? 0));
+            // Time points come from total minutes, not the payload
+            $timePoints = \App\Services\Progress\ProgressService::computeTimePoints((int) $timeSpentMinutes);
+            $quizPoints = (int) floor(($currentData['knowledge_check'] ?? 0));
+
+            $weighted = \App\Services\Progress\ProgressService::computeWeightedProgress(
+                $interactionPoints,
+                $codePoints,
+                $timePoints,
+                $quizPoints
+            );
+
+            // Determine status from computed progress if not provided
+            $computedOverall = (int) $weighted['overall_progress'];
+            
             // Prepare the update data
             $updateData = [
-                'progress_percentage' => $request->progress_percentage,
+                'progress_percentage' => $computedOverall,
                 'status' => $status,
                 'started_at' => $startedAt,
                 'completed_at' => $completedAt,
@@ -876,10 +911,8 @@ class AITutorController extends Controller
                 'last_interaction_at' => now(),
             ];
             
-            // Add progress_data if provided
-            if ($request->has('progress_data')) {
-                $updateData['progress_data'] = $request->progress_data;
-            }
+            // Persist merged progress_data plus a server-computed snapshot
+            $updateData['progress_data'] = json_encode($currentData);
             
             $progress = UserProgress::updateOrCreate(
                 [
@@ -892,13 +925,84 @@ class AITutorController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'Progress updated successfully',
-                'data' => $progress
+                'data' => array_merge($progress->toArray(), [
+                    'weighted_breakdown' => $weighted,
+                    'time_points' => $timePoints,
+                ])
             ]);
         } catch (\Exception $e) {
             Log::error('Error updating progress: ' . $e->getMessage());
             return response()->json([
                 'status' => 'error',
                 'message' => 'Error updating progress',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Heartbeat to accrue time and recompute weighted progress exactly per model.
+     * Expects: topic_id, minutes_increment (default 1)
+     */
+    public function heartbeat(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'topic_id' => 'required|exists:learning_topics,id',
+            'minutes_increment' => 'nullable|integer|min:0|max:60',
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $userId = Auth::id() ?? 1;
+            $topicId = (int) $request->topic_id;
+            $inc = (int) ($request->minutes_increment ?? 1);
+
+            $progress = UserProgress::firstOrCreate(
+                ['user_id' => $userId, 'topic_id' => $topicId],
+                ['progress_percentage' => 0, 'status' => 'in_progress', 'time_spent_minutes' => 0]
+            );
+
+            // Increment minutes
+            $progress->time_spent_minutes = (int) ($progress->time_spent_minutes ?? 0) + $inc;
+
+            // Compute weighted progress from stored progress_data + new time points
+            $currentData = json_decode($progress->progress_data ?? '{}', true) ?: [];
+            $interactionPoints = (int) floor(($currentData['interaction'] ?? 0));
+            $codePoints = (int) floor(($currentData['code_execution'] ?? 0));
+            $quizPoints = (int) floor(($currentData['knowledge_check'] ?? 0));
+            $timePoints = \App\Services\Progress\ProgressService::computeTimePoints((int) $progress->time_spent_minutes);
+
+            $weighted = \App\Services\Progress\ProgressService::computeWeightedProgress(
+                $interactionPoints, $codePoints, $timePoints, $quizPoints
+            );
+
+            $progress->progress_percentage = (int) $weighted['overall_progress'];
+            $progress->last_interaction_at = now();
+            if ($progress->progress_percentage >= 100) {
+                $progress->status = 'completed';
+                if (!$progress->completed_at) { $progress->completed_at = now(); }
+            } else {
+                $progress->status = 'in_progress';
+            }
+            $progress->save();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => array_merge($progress->toArray(), [
+                    'weighted_breakdown' => $weighted,
+                    'time_points' => $timePoints,
+                ])
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Heartbeat error: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error updating time progress',
                 'error' => $e->getMessage()
             ], 500);
         }

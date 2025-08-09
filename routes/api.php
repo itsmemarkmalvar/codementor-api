@@ -108,6 +108,7 @@ Route::post('/tutor/chat', [AITutorController::class, 'chat']);
 Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
 Route::post('/tutor/execute-project', [AITutorController::class, 'executeProject']);
 Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
+Route::post('/tutor/heartbeat', [AITutorController::class, 'heartbeat']);
 
 // Learning topics public routes
 Route::get('/topics', [LearningTopicController::class, 'index']);
@@ -121,6 +122,7 @@ Route::get('/lesson-plans/{id}', [LessonController::class, 'getLessonPlan']);
 Route::get('/lesson-plans/{lessonPlanId}/modules', [LessonController::class, 'getLessonPlanModules']);
 Route::get('/modules/{id}', [LessonController::class, 'getModule']);
 Route::get('/lesson-modules/{moduleId}/exercises', [LessonController::class, 'getModuleExercises']);
+Route::get('/topics/{topicId}/progress', [LessonController::class, 'getUserTopicProgress']);
 Route::get('/exercises/{id}', [LessonController::class, 'getExercise']);
 // Debug route for all lesson plans
 Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);

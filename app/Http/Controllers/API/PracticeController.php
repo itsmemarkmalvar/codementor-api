@@ -298,12 +298,13 @@ class PracticeController extends Controller
                 'status' => 'evaluated'
             ]);
             
-            // Calculate points if solution is correct
-            if ($allTestsPassed) {
-                $points = $attempt->calculateFinalScore();
-                $attempt->update(['points_earned' => $points]);
+            // Calculate points using Code Execution Reward Formula with Complexity
+            $complexity = \App\Services\Progress\ProgressService::calculateCodeComplexity($request->code ?? '');
+            $rewardPoints = \App\Services\Progress\ProgressService::computeExecutionReward($allTestsPassed, $complexity);
+            $attempt->update(['points_earned' => $rewardPoints, 'complexity_score' => $complexity]);
                 
-                // Update problem statistics
+            if ($allTestsPassed) {
+                // Update problem statistics on success
                 $problem->completion_count = ($problem->completion_count ?? 0) + 1;
                 $problem->attempts_count = ($problem->attempts_count ?? 0) + 1;
                 $problem->success_rate = $problem->completion_count / $problem->attempts_count * 100;
@@ -331,6 +332,7 @@ class PracticeController extends Controller
                     'attempt_id' => $attempt->id,
                     'is_correct' => $allTestsPassed,
                     'points_earned' => $attempt->points_earned ?? 0,
+                    'complexity_score' => $complexity,
                     'test_results' => $testResults,
                     'compiler_errors' => $compilerErrors,
                     'runtime_errors' => $runtimeErrors,

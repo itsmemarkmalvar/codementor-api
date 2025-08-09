@@ -574,14 +574,8 @@ class LessonController extends Controller
     public function getUserLessonProgress(Request $request, $lessonPlanId)
     {
         try {
-            $userId = Auth::id();
-            
-            if (!$userId) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'User not authenticated'
-                ], 401);
-            }
+            // Allow guest use in demo: fallback to user 1 if not authenticated
+            $userId = Auth::id() ?? 1;
             
             // Get the lesson plan with modules
             $lessonPlan = LessonPlan::with(['modules' => function($query) {
@@ -595,10 +589,16 @@ class LessonController extends Controller
                             ->get()
                             ->keyBy('module_id');
             
-            // Calculate overall lesson plan progress
+            // Calculate overall lesson plan progress as average of module progress percentages
             $totalModules = count($moduleIds);
-            $completedModules = $moduleProgress->where('status', 'completed')->count();
-            $overallPercentage = $totalModules > 0 ? round(($completedModules / $totalModules) * 100) : 0;
+            $sumPercent = 0;
+            $count = 0;
+            foreach ($lessonPlan->modules as $module) {
+                $progress = $moduleProgress->get($module->id);
+                $sumPercent += $progress ? (int) $progress->progress_percentage : 0;
+                $count++;
+            }
+            $overallPercentage = $count > 0 ? (int) round($sumPercent / $count) : 0;
             
             // Format the progress data
             $formattedProgress = [];
@@ -623,7 +623,7 @@ class LessonController extends Controller
                     'lesson_plan_id' => $lessonPlan->id,
                     'lesson_plan_title' => $lessonPlan->title,
                     'overall_percentage' => $overallPercentage,
-                    'completed_modules' => $completedModules,
+                    'completed_modules' => $moduleProgress->where('status', 'completed')->count(),
                     'total_modules' => $totalModules,
                     'module_progress' => $formattedProgress
                 ]
@@ -633,6 +633,80 @@ class LessonController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Error fetching user lesson progress',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get the user's progress for a specific topic as the average of lesson progresses.
+     * TopicProgress = average(LessonProgress_j) for all lessons j in the topic
+     */
+    public function getUserTopicProgress(Request $request, $topicId)
+    {
+        try {
+            // Allow guest use in demo: fallback to user 1 if not authenticated
+            $userId = Auth::id() ?? 1;
+
+            $topic = LearningTopic::findOrFail($topicId);
+            $lessonPlans = LessonPlan::where('topic_id', $topicId)
+                ->where('is_published', true)
+                ->orderBy('id')
+                ->get();
+
+            $lessonBreakdown = [];
+            $lessonPercents = [];
+
+            foreach ($lessonPlans as $plan) {
+                $modules = LessonModule::where('lesson_plan_id', $plan->id)
+                    ->where('is_published', true)
+                    ->orderBy('order_index')
+                    ->get();
+
+                $moduleIds = $modules->pluck('id')->toArray();
+                $moduleProgress = ModuleProgress::where('user_id', $userId)
+                    ->whereIn('module_id', $moduleIds)
+                    ->get()
+                    ->keyBy('module_id');
+
+                // LessonProgress = average of module progress percentages
+                $sumPercent = 0; $count = 0;
+                foreach ($modules as $module) {
+                    $progress = $moduleProgress->get($module->id);
+                    $sumPercent += $progress ? (int) $progress->progress_percentage : 0;
+                    $count++;
+                }
+                $lessonPercent = $count > 0 ? (int) round($sumPercent / $count) : 0;
+                $lessonPercents[] = $lessonPercent;
+
+                $lessonBreakdown[] = [
+                    'lesson_plan_id' => $plan->id,
+                    'lesson_plan_title' => $plan->title,
+                    'overall_percentage' => $lessonPercent,
+                    'modules_count' => $count,
+                ];
+            }
+
+            // TopicProgress = average of lesson progresses
+            $topicProgress = count($lessonPercents) > 0
+                ? (int) round(array_sum($lessonPercents) / count($lessonPercents))
+                : 0;
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'topic_id' => $topic->id,
+                    'topic_title' => $topic->title,
+                    'overall_percentage' => $topicProgress,
+                    'lessons_count' => count($lessonPercents),
+                    'lesson_breakdown' => $lessonBreakdown,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting user topic progress: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error fetching user topic progress',
                 'error' => $e->getMessage()
             ], 500);
         }
