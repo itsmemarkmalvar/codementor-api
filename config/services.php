@@ -40,4 +40,10 @@ return [
         'api_url' => env('TOGETHER_API_URL', 'https://api.together.xyz/v1'),
     ],
 
+    // Ensure Gemini key can be read via config('services.gemini.api_key')
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY', ''),
+        'model' => env('GEMINI_MODEL', 'gemini-1.5-flash'),
+    ],
+
 ];

@@ -186,36 +186,70 @@ class AITutorController extends Controller
                 $preferences = [];
             }
 
-            // Ensure conversation_history is an array
+            // Ensure conversation_history is an array and normalize/trim it to avoid model API issues
             $conversationHistory = $request->conversation_history ?? [];
             if (!is_array($conversationHistory)) {
                 $conversationHistory = [];
             }
+            // Normalize entries to expected shape { role: 'user'|'assistant', content: string }
+            $normalizedHistory = [];
+            foreach ($conversationHistory as $item) {
+                if ($item === null) { continue; }
+                if (is_object($item)) { $item = (array) $item; }
+                if (!is_array($item)) { continue; }
+                $role = isset($item['role']) && strtolower($item['role']) === 'user' ? 'user' : 'assistant';
+                $content = isset($item['content']) ? (string) $item['content'] : '';
+                if (trim($content) === '') { continue; }
+                // Cap extremely long turns to keep payload reasonable
+                if (strlen($content) > 1200) {
+                    $content = substr($content, 0, 1200);
+                }
+                $normalizedHistory[] = [ 'role' => $role, 'content' => $content ];
+            }
+            // Keep only the most recent 10 turns to limit token usage
+            if (count($normalizedHistory) > 10) {
+                $normalizedHistory = array_slice($normalizedHistory, -10);
+            }
+            $conversationHistory = $normalizedHistory;
 
             // Get response from AI tutor
             $isFallback = false;
             $responseMessage = null;
             
             try {
-                // Determine which AI service to use based on preferences
-                $model = isset($preferences['model']) ? strtolower($preferences['model']) : 'together';
-                
-                if ($model === 'gemini') {
-                    $response = $this->geminiService->getResponse(
-                        $request->question,
-                        $conversationHistory,
-                        $preferences,
-                        $topic ? $topic->title : null
-                    );
+                // Determine which AI service to use based on preferences or top-level param
+                $model = strtolower(
+                    $request->input('model', $preferences['model'] ?? ($preferences['aiModel'] ?? 'together'))
+                );
+
+                // Precheck for missing API keys to avoid confusing generic fallbacks
+                $geminiKey = config('services.gemini.api_key', env('GEMINI_API_KEY', ''));
+                $togetherKey = config('services.together.api_key', env('TOGETHER_API_KEY', ''));
+
+                if ($model === 'gemini' && empty($geminiKey)) {
+                    $isFallback = true;
+                    $response = 'Gemini AI is not configured (missing GEMINI_API_KEY). Please set it in the backend .env and reload.';
+                } elseif ($model === 'together' && empty($togetherKey)) {
+                    $isFallback = true;
+                    $response = 'Together AI is not configured (missing TOGETHER_API_KEY). Please set it in the backend .env and reload.';
                 } else {
-                    // Default to Together AI
-                    $response = $this->tutorService->getResponseWithContext(
-                        $request->question,
-                        $conversationHistory,
-                        $preferences,
-                        $topic ? $topic->title : null,
-                        $context
-                    );
+                    if ($model === 'gemini') {
+                        $response = $this->geminiService->getResponse(
+                            $request->question,
+                            $conversationHistory,
+                            $preferences,
+                            $topic ? $topic->title : null
+                        );
+                    } else {
+                        // Default to Together AI
+                        $response = $this->tutorService->getResponseWithContext(
+                            $request->question,
+                            $conversationHistory,
+                            $preferences,
+                            $topic ? $topic->title : null,
+                            $context
+                        );
+                    }
                 }
                 
                 // Check if this is a fallback response (contains specific fallback phrases)
@@ -289,7 +323,8 @@ class AITutorController extends Controller
                 'data' => [
                     'response' => $response,
                     'session_id' => $session ? $session->id : null,
-                    'is_fallback' => $isFallback
+                    'is_fallback' => $isFallback,
+                    'model' => $model
                 ]
             ], $isFallback ? 206 : 200); // Use 206 Partial Content for fallback responses
             

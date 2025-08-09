@@ -16,7 +16,8 @@ class GeminiService
     {
         $this->apiKey = env('GEMINI_API_KEY', '');
         $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta';
-        $this->model = 'gemini-1.5-pro'; // Default model
+        // Prefer a lighter model by default to stay within free-tier limits
+        $this->model = env('GEMINI_MODEL', 'gemini-1.5-flash');
     }
 
     /**
@@ -25,12 +26,17 @@ class GeminiService
     public function getResponse($question, $conversationHistory, $preferences, $topic = null)
     {
         try {
-            // Make sure API key is loaded before each request
+            // Make sure API key and model are loaded before each request
             if (empty($this->apiKey)) {
                 $this->apiKey = config('services.gemini.api_key', env('GEMINI_API_KEY', ''));
                 Log::info('GeminiService::getResponse - Refreshing API key from config', [
                     'apiKey_exists' => !empty($this->apiKey)
                 ]);
+            }
+            // Refresh model from config if available
+            $configuredModel = config('services.gemini.model', env('GEMINI_MODEL', $this->model));
+            if (!empty($configuredModel) && $configuredModel !== $this->model) {
+                $this->model = $configuredModel;
             }
 
             Log::info('GeminiService::getResponse - Starting request processing', [

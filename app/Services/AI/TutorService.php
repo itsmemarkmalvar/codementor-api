@@ -59,6 +59,11 @@ class TutorService
 
             $systemPrompt = $this->generateSystemPrompt($preferences, $topic);
             $formattedHistory = $this->formatConversationHistory($conversationHistory);
+
+            // Ensure the conversation starts with a user message (Together may 400 if assistant comes first)
+            while (!empty($formattedHistory) && ($formattedHistory[0]['role'] ?? '') === 'assistant') {
+                array_shift($formattedHistory);
+            }
             
             Log::info('TutorService::getResponse - Created system prompt and formatted history', [
                 'systemPrompt_length' => strlen($systemPrompt),
@@ -86,12 +91,35 @@ class TutorService
                     'content' => $message['content']
                 ];
             }
-            
-            // Add the current question
-            $requestBody['messages'][] = [
-                'role' => 'user',
-                'content' => $question
-            ];
+
+            // Add the current question unless it's already the last user turn in history
+            $shouldAppendQuestion = true;
+            if (!empty($formattedHistory)) {
+                $last = end($formattedHistory);
+                if (($last['role'] ?? '') === 'user') {
+                    $lastContent = is_string($last['content'] ?? null) ? $last['content'] : '';
+                    $norm = function (string $t): string {
+                        $t = str_replace(["\r\n", "\r"], "\n", $t);
+                        $t = preg_replace('/\s+/u', ' ', $t);
+                        return trim($t ?? '');
+                    };
+                    $a = $norm((string)$question);
+                    $b = $norm((string)$lastContent);
+                    if ($a !== '' && $b !== '') {
+                        // Treat as duplicate if equal or one contains the other with small delta
+                        if ($a === $b || strpos($a, $b) !== false || strpos($b, $a) !== false) {
+                            $shouldAppendQuestion = false;
+                        }
+                    }
+                }
+            }
+
+            if ($shouldAppendQuestion) {
+                $requestBody['messages'][] = [
+                    'role' => 'user',
+                    'content' => $question
+                ];
+            }
             
             Log::info('TutorService::getResponse - Sending request to Together AI', [
                 'url' => $this->apiUrl . '/chat/completions',
@@ -237,6 +265,28 @@ class TutorService
 
             $systemPrompt = $this->generateSystemPromptWithContext($preferences, $topic, $context);
             $formattedHistory = $this->formatConversationHistory($conversationHistory);
+
+            // Ensure the conversation starts with a user message (Together may 400 if assistant comes first)
+            while (!empty($formattedHistory) && ($formattedHistory[0]['role'] ?? '') === 'assistant') {
+                array_shift($formattedHistory);
+            }
+
+            // Guardrail: trim conversation to avoid Together API 400 validation errors due to oversized payloads
+            if (count($formattedHistory) > 0) {
+                $maxChars = 5000; // soft limit for combined history content
+                $trimmed = [];
+                $running = 0;
+                // include from the end (most recent first)
+                foreach (array_reverse($formattedHistory) as $msg) {
+                    $len = strlen($msg['content']);
+                    if ($running + $len > $maxChars) {
+                        break;
+                    }
+                    $trimmed[] = $msg;
+                    $running += $len;
+                }
+                $formattedHistory = array_reverse($trimmed);
+            }
             
             Log::info('TutorService::getResponseWithContext - Created system prompt and formatted history', [
                 'systemPrompt_length' => strlen($systemPrompt),
@@ -264,12 +314,34 @@ class TutorService
                     'content' => $message['content']
                 ];
             }
-            
-            // Add the current question
-            $requestBody['messages'][] = [
-                'role' => 'user',
-                'content' => $question
-            ];
+
+            // Add the current question unless it's already the last user turn in history
+            $shouldAppendQuestion = true;
+            if (!empty($formattedHistory)) {
+                $last = end($formattedHistory);
+                if (($last['role'] ?? '') === 'user') {
+                    $lastContent = is_string($last['content'] ?? null) ? $last['content'] : '';
+                    $norm = function (string $t): string {
+                        $t = str_replace(["\r\n", "\r"], "\n", $t);
+                        $t = preg_replace('/\s+/u', ' ', $t);
+                        return trim($t ?? '');
+                    };
+                    $a = $norm((string)$question);
+                    $b = $norm((string)$lastContent);
+                    if ($a !== '' && $b !== '') {
+                        if ($a === $b || strpos($a, $b) !== false || strpos($b, $a) !== false) {
+                            $shouldAppendQuestion = false;
+                        }
+                    }
+                }
+            }
+
+            if ($shouldAppendQuestion) {
+                $requestBody['messages'][] = [
+                    'role' => 'user',
+                    'content' => $question
+                ];
+            }
             
             Log::info('TutorService::getResponseWithContext - Sending request to Together AI', [
                 'url' => $this->apiUrl . '/chat/completions',
