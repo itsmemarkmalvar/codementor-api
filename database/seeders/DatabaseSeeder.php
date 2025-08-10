@@ -42,5 +42,8 @@ class DatabaseSeeder extends Seeder
         
         // Seed practice resources and their associations with practice problems
         $this->call(PracticeResourceSeeder::class);
+
+        // Seed quizzes (easy/medium/hard) with questions
+        $this->call(QuizSeeder::class);
     }
 }

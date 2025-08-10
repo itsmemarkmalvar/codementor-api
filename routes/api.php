@@ -127,6 +127,8 @@ Route::get('/exercises/{id}', [LessonController::class, 'getExercise']);
 // Debug route for all lesson plans
 Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);
 
+// Remove public quiz read routes; quizzes require auth
+
 // Public practice routes (for demo and guest users)
 Route::prefix('practice')->group(function () {
     Route::get('/categories', [PracticeController::class, 'getCategories']);
@@ -212,7 +214,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/modules/struggle-point', [LessonController::class, 'recordStrugglePoint']);
     Route::get('/exercises/{id}/hint', [LessonController::class, 'getNextHint']);
     
-    // Quiz routes
+    // Quiz routes (attempts require auth)
     Route::get('/quizzes/{id}', [QuizController::class, 'getQuiz']);
     Route::get('/modules/{moduleId}/quizzes', [QuizController::class, 'getModuleQuizzes']);
     Route::post('/quizzes/{id}/attempt', [QuizController::class, 'startQuizAttempt']);

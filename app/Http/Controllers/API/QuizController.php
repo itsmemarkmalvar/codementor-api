@@ -38,19 +38,37 @@ class QuizController extends Controller
     public function getModuleQuizzes($moduleId)
     {
         try {
+            $user = Auth::user();
+            if (!$user) {
+                return response()->json(['message' => 'Unauthorized'], 401);
+            }
+
             $quizzes = LessonQuiz::where('module_id', $moduleId)
+                ->orderBy('difficulty')
                 ->orderBy('order_index')
                 ->get();
-            
-            $user = Auth::user();
-            if ($user) {
-                foreach ($quizzes as $quiz) {
-                    $quiz->passed = $quiz->isPassedByUser($user->id);
+
+            // Determine highest passed difficulty for this module
+            $highestPassed = 0;
+            foreach ($quizzes as $q) {
+                if ($q->isPassedByUser($user->id)) {
+                    $highestPassed = max($highestPassed, (int) ($q->difficulty ?? 0));
                 }
             }
-            
+
+            // Compute lock state: only allow difficulty <= highestPassed+1
+            $decorated = $quizzes->map(function ($q) use ($user, $highestPassed) {
+                $passed = $q->isPassedByUser($user->id);
+                $difficulty = (int) ($q->difficulty ?? 0);
+                $locked = $difficulty > ($highestPassed + 1);
+                return array_merge($q->toArray(), [
+                    'passed' => $passed,
+                    'locked' => $locked,
+                ]);
+            });
+
             return response()->json([
-                'quizzes' => $quizzes
+                'quizzes' => $decorated
             ]);
         } catch (\Exception $e) {
             Log::error('Error retrieving module quizzes: ' . $e->getMessage());
@@ -67,6 +85,25 @@ class QuizController extends Controller
             $quiz = LessonQuiz::findOrFail($id);
             $user = Auth::user();
             
+            if (!$user) {
+                return response()->json(['message' => 'Unauthorized'], 401);
+            }
+
+            // Enforce gating per module: difficulty <= highestPassed+1
+            $moduleQuizzes = LessonQuiz::where('module_id', $quiz->module_id)->get();
+            $highestPassed = 0;
+            foreach ($moduleQuizzes as $q) {
+                if ($q->isPassedByUser($user->id)) {
+                    $highestPassed = max($highestPassed, (int) ($q->difficulty ?? 0));
+                }
+            }
+            $requestedDifficulty = (int) ($quiz->difficulty ?? 0);
+            if ($requestedDifficulty > $highestPassed + 1) {
+                return response()->json([
+                    'message' => 'Quiz is locked. Please pass the lower difficulty first.'
+                ], 403);
+            }
+
             // Check if there's an incomplete attempt
             $existingAttempt = QuizAttempt::where('user_id', $user->id)
                 ->where('quiz_id', $id)
@@ -110,19 +147,31 @@ class QuizController extends Controller
      */
     public function submitQuizAttempt(Request $request, $id)
     {
+        // Validate first so ValidationException returns 422 gracefully
+        try {
+            $validated = $request->validate([
+                'responses' => 'required|array',
+                'time_spent_seconds' => 'nullable|integer|min:0'
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $ve) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $ve->errors()
+            ], 422);
+        }
+
         try {
             $attempt = QuizAttempt::findOrFail($id);
             $user = Auth::user();
+
+            if (!$user) {
+                return response()->json(['message' => 'Unauthorized'], 401);
+            }
             
             // Ensure the attempt belongs to the authenticated user
             if ($attempt->user_id !== $user->id) {
                 return response()->json(['message' => 'Unauthorized access to quiz attempt'], 403);
             }
-            
-            // Validate input
-            $validated = $request->validate([
-                'responses' => 'required|array'
-            ]);
             
             $quiz = LessonQuiz::with('questions')->findOrFail($attempt->quiz_id);
             $questions = $quiz->questions;
@@ -156,7 +205,7 @@ class QuizController extends Controller
             $attempt->score = $score;
             $attempt->max_possible_score = $maxPossibleScore;
             $attempt->percentage = $percentage;
-            $attempt->time_spent_seconds = $timeSpent;
+            $attempt->time_spent_seconds = $validated['time_spent_seconds'] ?? $timeSpent;
             $attempt->passed = $passed;
             $attempt->completed_at = now();
             $attempt->save();

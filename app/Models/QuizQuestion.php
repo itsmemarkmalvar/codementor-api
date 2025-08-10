@@ -67,6 +67,12 @@ class QuizQuestion extends Model
                 return in_array($userAnswer, $this->correct_answers);
                 
             case 'true_false':
+                // Accept boolean true/false or string 'true'/'false'
+                if (is_string($userAnswer)) {
+                    $val = strtolower(trim($userAnswer));
+                    if ($val === 'true') { $userAnswer = true; }
+                    elseif ($val === 'false') { $userAnswer = false; }
+                }
                 return $userAnswer === $this->correct_answers[0];
                 
             case 'fill_in_blank':
