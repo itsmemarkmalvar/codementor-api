@@ -83,6 +83,36 @@ class ProgressService
             'overall_progress' => $overall,
         ];
     }
+
+    /**
+     * PerformanceScore = α(QuizScore) + β(CodeSuccessRate) − γ(ErrorRate)
+     * All inputs are expected as numeric (0-100 for percentages). α, β, γ default to 1.0
+     */
+    public static function computePerformanceScore(
+        float $quizScore,
+        float $codeSuccessRate,
+        float $errorRate,
+        float $alpha = 1.0,
+        float $beta = 1.0,
+        float $gamma = 1.0
+    ): float {
+        $score = ($alpha * $quizScore) + ($beta * $codeSuccessRate) - ($gamma * $errorRate);
+        return round($score, 2);
+    }
+
+    /**
+     * Difficulty_next = { Increase if score > ThresholdHigh; Decrease if score < ThresholdLow; Same otherwise }
+     */
+    public static function decideNextDifficulty(float $performanceScore, float $thresholdHigh = 70.0, float $thresholdLow = 40.0): string
+    {
+        if ($performanceScore > $thresholdHigh) {
+            return 'increase';
+        }
+        if ($performanceScore < $thresholdLow) {
+            return 'decrease';
+        }
+        return 'same';
+    }
 }
 
 

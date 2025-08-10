@@ -8,6 +8,9 @@ use App\Models\UserProgress;
 use Illuminate\Support\Facades\Auth;
 use App\Models\LearningTopic;
 use Illuminate\Support\Facades\Log;
+use App\Services\Progress\ProgressService;
+use App\Models\ExerciseAttempt;
+use App\Models\QuizAttempt;
 
 class UserProgressController extends Controller
 {
@@ -422,6 +425,135 @@ class UserProgressController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to retrieve topics with lock status',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get a consolidated summary of the current user's progress for dashboard use.
+     * Includes totals, aggregate weighted breakdown (per specified formulas),
+     * recent progress list, and per-topic entries.
+     */
+    public function summary()
+    {
+        try {
+            $userId = Auth::id() ?? 1;
+
+            $progress = UserProgress::with('topic')
+                ->where('user_id', $userId)
+                ->get();
+
+            $topicsTracked = $progress->count();
+            $totalMinutes = (int) $progress->sum(function ($p) {
+                return (int) ($p->time_spent_minutes ?? 0);
+            });
+            $avgProgress = $topicsTracked > 0
+                ? (int) round($progress->avg('progress_percentage'))
+                : 0;
+            $topicsCompleted = $progress->filter(function ($p) {
+                return (int) ($p->progress_percentage ?? 0) >= 80 || ($p->status === 'completed');
+            })->count();
+            $bestStreak = (int) $progress->max('current_streak_days');
+
+            // Aggregate points from progress_data across topics
+            $sumInteraction = 0; $sumCode = 0; $sumQuiz = 0;
+            foreach ($progress as $p) {
+                $data = [];
+                if (!empty($p->progress_data)) {
+                    $decoded = json_decode($p->progress_data, true);
+                    if (is_array($decoded)) { $data = $decoded; }
+                }
+                $sumInteraction += (int) floor($data['interaction'] ?? 0);
+                $sumCode += (int) floor($data['code_execution'] ?? 0);
+                $sumQuiz += (int) floor($data['knowledge_check'] ?? 0);
+            }
+
+            $timePoints = ProgressService::computeTimePoints($totalMinutes);
+            $weighted = ProgressService::computeWeightedProgress(
+                (int) $sumInteraction,
+                (int) $sumCode,
+                (int) $timePoints,
+                (int) $sumQuiz
+            );
+
+            // Recent progress (limit 6)
+            $recent = $progress
+                ->sortByDesc(function ($p) {
+                    return $p->last_interaction_at ? strtotime($p->last_interaction_at) : 0;
+                })
+                ->take(6)
+                ->values()
+                ->map(function ($p) {
+                    return [
+                        'topic_id' => (int) $p->topic_id,
+                        'topic_title' => $p->topic ? $p->topic->title : null,
+                        'progress_percentage' => (int) $p->progress_percentage,
+                        'status' => $p->status,
+                        'time_spent_minutes' => (int) ($p->time_spent_minutes ?? 0),
+                        'last_interaction_at' => $p->last_interaction_at,
+                    ];
+                });
+
+            // Per-topic listing
+            $byTopic = $progress->map(function ($p) {
+                return [
+                    'topic_id' => (int) $p->topic_id,
+                    'topic_title' => $p->topic ? $p->topic->title : null,
+                    'progress_percentage' => (int) $p->progress_percentage,
+                    'status' => $p->status,
+                    'time_spent_minutes' => (int) ($p->time_spent_minutes ?? 0),
+                    'last_interaction_at' => $p->last_interaction_at,
+                ];
+            });
+
+            // RL metrics and suggestion (overall)
+            $quizAttempts = QuizAttempt::where('user_id', $userId)->get();
+            $quizAvg = $quizAttempts->count() > 0
+                ? (float) round($quizAttempts->avg('percentage'), 2)
+                : 0.0;
+
+            $codeAttemptsTotal = ExerciseAttempt::where('user_id', $userId)->count();
+            $codeAttemptsCorrect = ExerciseAttempt::where('user_id', $userId)->where('is_correct', true)->count();
+            $codeSuccessRate = $codeAttemptsTotal > 0
+                ? (float) round(($codeAttemptsCorrect / $codeAttemptsTotal) * 100.0, 2)
+                : 0.0;
+            $errorRate = $codeAttemptsTotal > 0
+                ? (float) round((($codeAttemptsTotal - $codeAttemptsCorrect) / $codeAttemptsTotal) * 100.0, 2)
+                : 0.0;
+
+            $performanceScore = ProgressService::computePerformanceScore($quizAvg, $codeSuccessRate, $errorRate);
+            $difficultyNext = ProgressService::decideNextDifficulty($performanceScore);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'totals' => [
+                        'topics_tracked' => $topicsTracked,
+                        'topics_completed' => $topicsCompleted,
+                        'total_minutes' => $totalMinutes,
+                        'avg_progress' => $avgProgress,
+                        'best_streak_days' => $bestStreak,
+                    ],
+                    'weighted_breakdown' => $weighted,
+                    'recent_progress' => $recent,
+                    'by_topic' => $byTopic,
+                    'rl' => [
+                        'quiz_avg_percent' => $quizAvg,
+                        'code_success_rate' => $codeSuccessRate,
+                        'error_rate' => $errorRate,
+                        'performance_score' => $performanceScore,
+                        'difficulty_next' => $difficultyNext,
+                        'thresholds' => [ 'high' => 70.0, 'low' => 40.0 ],
+                        'weights' => [ 'alpha' => 1.0, 'beta' => 1.0, 'gamma' => 1.0 ]
+                    ],
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error building progress summary: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to build progress summary',
                 'error' => $e->getMessage()
             ], 500);
         }

@@ -191,6 +191,7 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // User progress
     Route::get('/progress', [UserProgressController::class, 'index']);
+    Route::get('/progress/summary', [UserProgressController::class, 'summary']);
     Route::get('/progress/{topicId}', [UserProgressController::class, 'show']);
     Route::put('/progress/{topicId}', [UserProgressController::class, 'update']);
     Route::get('/topics/lock-status', [UserProgressController::class, 'getTopicsWithLockStatus']);
