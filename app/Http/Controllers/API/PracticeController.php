@@ -250,6 +250,13 @@ class PracticeController extends Controller
                 '',
                 $problem->test_cases
             );
+            // Debug breadcrumbs for visibility when students see "No output"
+            \Log::info('[Practice] Execution summary', [
+                'problem_id' => $id,
+                'success' => $executionResult['success'] ?? null,
+                'first_test' => $executionResult['test_results'][0] ?? null,
+                'stdout_present' => isset($executionResult['test_results'][0]['actual']) && $executionResult['test_results'][0]['actual'] !== null,
+            ]);
             
             // Check if all test cases passed
             $allTestsPassed = true;

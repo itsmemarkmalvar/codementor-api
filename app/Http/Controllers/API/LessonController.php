@@ -9,6 +9,7 @@ use App\Models\LessonExercise;
 use App\Models\ModuleProgress;
 use App\Models\ExerciseAttempt;
 use App\Models\LearningTopic;
+use App\Models\PracticeProblem;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -280,6 +281,146 @@ class LessonController extends Controller
                 'status' => 'error',
                 'message' => 'Error fetching module exercises',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Return practice problems related to a module based on topic and keywords.
+     */
+    public function getRelatedPracticeProblems(Request $request, $moduleId)
+    {
+        try {
+            $module = LessonModule::findOrFail($moduleId);
+            $lessonPlan = LessonPlan::findOrFail($module->lesson_plan_id);
+            $topic = LearningTopic::find($lessonPlan->topic_id);
+
+            // Build keyword list from module title and key points
+            $keywords = [];
+            $titleWords = preg_split('/\W+/', strtolower($module->title));
+            foreach ($titleWords as $w) {
+                if (strlen($w) >= 3) { $keywords[] = $w; }
+            }
+            if (!empty($module->key_points)) {
+                $kp = is_string($module->key_points) ? json_decode($module->key_points, true) : $module->key_points;
+                if (is_array($kp)) {
+                    foreach ($kp as $kpItem) {
+                        $pieces = preg_split('/\W+/', strtolower((string) $kpItem));
+                        foreach ($pieces as $p) { if (strlen($p) >= 3) { $keywords[] = $p; } }
+                    }
+                }
+            }
+            if ($topic && $topic->title) {
+                $keywords[] = strtolower($topic->title);
+            }
+
+            // Deduplicate
+            $keywords = array_values(array_unique(array_filter($keywords)));
+
+            // Query practice problems matching any keyword in title/description/topic_tags/learning_concepts
+            $query = PracticeProblem::query();
+            if (!empty($keywords)) {
+                $query->where(function($q) use ($keywords) {
+                    foreach ($keywords as $kw) {
+                        $q->orWhere('title', 'like', "%$kw%")
+                          ->orWhere('description', 'like', "%$kw%")
+                          ->orWhere('learning_concepts', 'like', "%$kw%")
+                          ->orWhereJsonContains('topic_tags', $kw);
+                    }
+                });
+            }
+
+            $problems = $query
+                ->orderByDesc('success_rate')
+                ->limit(8)
+                ->get(['id','title','difficulty_level','points','success_rate','topic_tags']);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $problems,
+                'keywords' => $keywords,
+                'topic' => $topic ? ($topic->title ?? null) : null,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting related practice problems: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error fetching related practice problems',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Update the authenticated user's progress for a specific module.
+     * Endpoint used by FE when user clicks "Mark as complete" or progresses within a module.
+     * Body: { status: 'not_started'|'in_progress'|'completed', time_spent_minutes?: int }
+     */
+    public function updateModuleProgress(Request $request, $moduleId)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|in:not_started,in_progress,completed',
+            'time_spent_minutes' => 'nullable|integer|min:0'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $userId = Auth::id();
+            if (!$userId) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            // Ensure module exists
+            $module = LessonModule::findOrFail($moduleId);
+
+            // Get or create progress row
+            $progress = ModuleProgress::firstOrCreate(
+                [ 'user_id' => $userId, 'module_id' => (int) $moduleId ],
+                [ 'status' => 'not_started', 'progress_percentage' => 0, 'started_at' => now() ]
+            );
+
+            // Optional time accumulation
+            if ($request->filled('time_spent_minutes')) {
+                $progress->time_spent_seconds = (int) ($progress->time_spent_seconds ?? 0) + ((int) $request->time_spent_minutes * 60);
+            }
+
+            // Update status
+            $status = $request->get('status');
+            if ($status === 'completed') {
+                $progress->markAsCompleted();
+            } elseif ($status === 'in_progress') {
+                $progress->markAsStarted();
+            } else {
+                // Reset to not started
+                $progress->status = 'not_started';
+                $progress->progress_percentage = 0;
+                $progress->save();
+            }
+
+            // Recompute percentage from exercise completions
+            $progress->refresh();
+            $progress->updateProgressPercentage();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Module progress updated',
+                'data' => $progress
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error updating module progress: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Error updating module progress',
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

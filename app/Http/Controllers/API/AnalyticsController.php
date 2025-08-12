@@ -14,16 +14,25 @@ use Illuminate\Support\Facades\DB;
 
 class AnalyticsController extends Controller
 {
-    /**
-     * Compare Gemini vs Together on tutoring impact.
-     * Params: window (e.g., '30d'), k_runs (int), lookahead_min (int)
-     */
+     /**
+      * Compare Gemini vs Together on tutoring impact.
+      * Params:
+      *  - window (e.g., '30d')
+      *  - k_runs (int)
+      *  - lookahead_min (int)
+      *  - topic_id (optional filter)
+      *  - difficulty (optional filter: beginner|easy|medium|hard|expert)
+      *  - nmin (int, minimum sample size to show stats)
+      */
     public function compareModels(Request $request)
     {
         $userId = Auth::id();
         $window = $request->get('window', '30d');
         $k = (int) $request->get('k_runs', 3);
         $lookahead = (int) $request->get('lookahead_min', 30);
+         $topicId = $request->get('topic_id');
+         $difficulty = $request->get('difficulty');
+         $nmin = (int) $request->get('nmin', 5);
 
         // Window start
         $now = Carbon::now();
@@ -36,6 +45,7 @@ class AnalyticsController extends Controller
         // Load chat messages within window for this user, tagged with model
         $messages = ChatMessage::where('user_id', $userId)
             ->whereNotNull('model')
+            ->when($topicId, fn($q) => $q->where('topic_id', $topicId))
             ->whereBetween('created_at', [$start, $now])
             ->orderBy('created_at')
             ->get();
@@ -51,10 +61,18 @@ class AnalyticsController extends Controller
         }
 
         // Preload practice and quiz attempts for joins
-        $runs = PracticeAttempt::where('user_id', $userId)
+        $runsQuery = PracticeAttempt::where('user_id', $userId)
             ->whereBetween('created_at', [$start, $now])
-            ->orderBy('created_at')
-            ->get(['id','created_at','is_correct','compiler_errors','runtime_errors']);
+            ->orderBy('created_at');
+
+        // Optional difficulty filter via related PracticeProblem
+        if (!empty($difficulty)) {
+            $runsQuery->whereHas('problem', function($q) use ($difficulty) {
+                $q->where('difficulty_level', $difficulty);
+            });
+        }
+
+        $runs = $runsQuery->get(['id','created_at','is_correct','compiler_errors','runtime_errors']);
 
         $quizzes = QuizAttempt::where('user_id', $userId)
             ->whereBetween('created_at', [$start, $now])
@@ -118,10 +136,10 @@ class AnalyticsController extends Controller
         }
 
         // Aggregate per user/model
-        $userModelAgg = collect($byUserModel)->map(function($v) {
+        $userModelAgg = collect($byUserModel)->map(function($v) use ($nmin) {
             $items = collect($v['items']);
             $count = $items->count();
-            return [
+            $row = [
                 'user_id' => $v['user_id'],
                 'model' => $v['model'],
                 'n' => $count,
@@ -133,6 +151,19 @@ class AnalyticsController extends Controller
                 'fallback_rate' => $items->avg('fallback'),
                 'latency_ms' => $items->filter(fn($x)=>$x['latency']>0)->avg('latency'),
             ];
+
+            // Suppress metrics if sample size is below threshold
+            if ($count < $nmin) {
+                $row['success1'] = null;
+                $row['ttf_min'] = null;
+                $row['delta_errors'] = null;
+                $row['delta_quiz'] = null;
+                $row['rating'] = null;
+                $row['fallback_rate'] = null;
+                $row['latency_ms'] = null;
+            }
+
+            return $row;
         })->values();
 
         // Pair within user
@@ -175,10 +206,22 @@ class AnalyticsController extends Controller
             'latency_ms' => $mean($paired, 'd_latency_ms'),
         ];
 
+        // Suppress paired stats when n < nmin
+        foreach ($pairedStats as $kStat => $stat) {
+            if (is_array($stat) && isset($stat['n']) && $stat['n'] < $nmin) {
+                $pairedStats[$kStat]['mean'] = null;
+            }
+        }
+
         return response()->json([
             'window' => $window,
             'k_runs' => $k,
             'lookahead_min' => $lookahead,
+            'nmin' => $nmin,
+            'filters' => [
+                'topic_id' => $topicId,
+                'difficulty' => $difficulty,
+            ],
             'user_model' => $userModelAgg,
             'paired' => $pairedStats,
         ]);

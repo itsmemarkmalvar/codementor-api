@@ -186,3 +186,35 @@ php artisan db:seed
 - Only use one topic seeder at a time to avoid duplication
 - The LessonPlanSeeder now checks for existing lesson plans to prevent duplicates
 - If you see duplicate lesson plans, use the ResetLessonPlansSeeder to clean up
+
+## Tutor Impact Comparative Algorithm (TICA)
+
+We compare `gemini` vs `together` on tutoring impact using within-user comparisons over a recent time window.
+
+Parameters:
+
+- Window: `window ∈ {7d, 30d, 90d}`
+- Baseline runs: `K ∈ {1,3,5}`
+- Lookahead: `L` minutes (15/30/60)
+- Minimum sample size: `Nmin` (default 5)
+
+Per assistant reply at time `t` we compute, looking ahead up to `min(t+L, next_reply)`:
+
+- Next‑run success: `success1 ∈ {0,1}` for the first practice run after `t`
+- Time‑to‑first‑success: `ttf_min` minutes
+- Error reduction: `Δerrors = errors_prior(K) − errors_post(K)`
+- Quiz gain: `Δquiz = avg_quiz(after 1d) − avg_quiz(before 7d)`
+- Rating, fallback, latency: from the chat message metadata
+
+Aggregation:
+
+- Per user/model, average the above; keep `n` = number of replies used
+- Paired deltas per user: `Δ = gemini − together`
+
+Suppression:
+
+- If `n < Nmin`, hide per‑model metrics for that user/model
+- For paired stats, report mean/SE only when paired sample `n ≥ Nmin`
+
+API: `GET /api/analytics/models/compare?window=30d&k_runs=3&lookahead_min=30&topic_id=&difficulty=&nmin=5`
+

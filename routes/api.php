@@ -14,6 +14,7 @@ use App\Http\Controllers\API\QuizController;
 use App\Http\Controllers\API\PracticeController;
 use App\Http\Controllers\API\ProjectController;
 use App\Http\Controllers\API\AnalyticsController;
+use App\Http\Controllers\API\HealthController;
 use Illuminate\Support\Facades\Auth;
 
 /*
@@ -124,7 +125,10 @@ Route::get('/topics/{topicId}/lesson-plans', [LessonController::class, 'getLesso
 Route::get('/lesson-plans/{id}', [LessonController::class, 'getLessonPlan']);
 Route::get('/lesson-plans/{lessonPlanId}/modules', [LessonController::class, 'getLessonPlanModules']);
 Route::get('/modules/{id}', [LessonController::class, 'getModule']);
+// Deprecated: exercises per module (use related practice instead)
 Route::get('/lesson-modules/{moduleId}/exercises', [LessonController::class, 'getModuleExercises']);
+// New: related practice for module
+Route::get('/lesson-modules/{moduleId}/related-practice', [LessonController::class, 'getRelatedPracticeProblems']);
 Route::get('/topics/{topicId}/progress', [LessonController::class, 'getUserTopicProgress']);
 Route::get('/exercises/{id}', [LessonController::class, 'getExercise']);
 // Debug route for all lesson plans
@@ -188,6 +192,7 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // User lesson progress
     Route::get('/lesson-plans/{id}/progress', [LessonController::class, 'getUserLessonProgress']);
+    Route::post('/lesson-modules/{moduleId}/progress', [LessonController::class, 'updateModuleProgress']);
     Route::post('/modules/struggle-point', [LessonController::class, 'recordStrugglePoint']);
     Route::get('/exercises/{id}/hint', [LessonController::class, 'getNextHint']);
     
@@ -223,4 +228,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Analytics
     Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
+    // Health
+    Route::get('/health/piston', [HealthController::class, 'piston']);
+    Route::get('/health/judge0', [HealthController::class, 'judge0']);
 }); 
