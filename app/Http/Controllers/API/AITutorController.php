@@ -233,6 +233,7 @@ class AITutorController extends Controller
                     $isFallback = true;
                     $response = 'Together AI is not configured (missing TOGETHER_API_KEY). Please set it in the backend .env and reload.';
                 } else {
+                    $t0 = microtime(true);
                     if ($model === 'gemini') {
                         $response = $this->geminiService->getResponse(
                             $request->question,
@@ -250,6 +251,7 @@ class AITutorController extends Controller
                             $context
                         );
                     }
+                    $latencyMs = (int) round((microtime(true) - $t0) * 1000);
                 }
                 
                 // Check if this is a fallback response (contains specific fallback phrases)
@@ -281,7 +283,7 @@ class AITutorController extends Controller
             try {
                 $userId = Auth::id() ?? 1;
                 
-                ChatMessage::create([
+                $savedMessage = ChatMessage::create([
                     'user_id' => $userId,
                     'message' => $request->question,
                     'response' => $response,
@@ -291,6 +293,8 @@ class AITutorController extends Controller
                     'conversation_history' => $request->conversation_history ?? [],
                     'preferences' => $request->preferences ?? [],
                     'is_fallback' => $isFallback,
+                    'model' => $model,
+                    'response_time_ms' => isset($latencyMs) ? $latencyMs : null,
                 ]);
             } catch (\Exception $e) {
                 // Log the error but continue since this is not critical
@@ -324,7 +328,9 @@ class AITutorController extends Controller
                     'response' => $response,
                     'session_id' => $session ? $session->id : null,
                     'is_fallback' => $isFallback,
-                    'model' => $model
+                    'model' => $model,
+                    'chat_message_id' => isset($savedMessage) ? $savedMessage->id : null,
+                    'response_time_ms' => isset($latencyMs) ? $latencyMs : null,
                 ]
             ], $isFallback ? 206 : 200); // Use 206 Partial Content for fallback responses
             

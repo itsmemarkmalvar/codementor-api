@@ -16,11 +16,16 @@ class ChatMessage extends Model
         'context',
         'conversation_history',
         'preferences',
+        'model',
+        'response_time_ms',
+        'is_fallback',
+        'user_rating',
     ];
 
     protected $casts = [
         'conversation_history' => 'json',
         'preferences' => 'json',
+        'is_fallback' => 'boolean',
     ];
 
     /**

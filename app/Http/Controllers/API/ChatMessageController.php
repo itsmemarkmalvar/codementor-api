@@ -146,4 +146,30 @@ class ChatMessageController extends Controller
             'message' => 'Chat message deleted successfully'
         ]);
     }
+
+    /**
+     * Rate a chat message (1–5).
+     */
+    public function rate(string $id, Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'rating' => 'required|integer|min:1|max:5'
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = Auth::id();
+        $message = ChatMessage::findOrFail($id);
+        if ($message->user_id !== $userId) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
+        }
+        $message->user_rating = (int) $request->rating;
+        $message->save();
+
+        return response()->json(['status' => 'success', 'data' => $message]);
+    }
 }

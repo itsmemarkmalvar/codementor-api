@@ -13,6 +13,7 @@ use App\Http\Controllers\API\LessonController;
 use App\Http\Controllers\API\QuizController;
 use App\Http\Controllers\API\PracticeController;
 use App\Http\Controllers\API\ProjectController;
+use App\Http\Controllers\API\AnalyticsController;
 use Illuminate\Support\Facades\Auth;
 
 /*
@@ -190,6 +191,7 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // Chat messages
     Route::apiResource('messages', ChatMessageController::class);
+    Route::post('/messages/{id}/rate', [ChatMessageController::class, 'rate']);
     
     // User progress
     Route::get('/progress', [UserProgressController::class, 'index']);
@@ -243,4 +245,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Project import/export
     Route::get('/projects/{id}/export', [ProjectController::class, 'export']);
     Route::post('/projects/import', [ProjectController::class, 'import']);
+
+    // Analytics
+    Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
 }); 
