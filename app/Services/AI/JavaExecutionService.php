@@ -5,6 +5,7 @@ namespace App\Services\AI;
 use Exception;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class JavaExecutionService
@@ -137,6 +138,11 @@ class JavaExecutionService
     public function executeJavaCode(string $code, ?string $input = null): array
     {
         try {
+            $provider = strtolower((string) env('CODE_EXECUTION_PROVIDER', 'local'));
+
+            if ($provider === 'piston') {
+                return $this->executeViaPistonSingle($code, $input);
+            }
             // Extract the class name from the code
             $className = $this->extractClassName($code);
             
@@ -208,6 +214,11 @@ class JavaExecutionService
     public function executeJavaProject(array $files, string $mainClass, ?string $input = null): array
     {
         try {
+            $provider = strtolower((string) env('CODE_EXECUTION_PROVIDER', 'local'));
+
+            if ($provider === 'piston') {
+                return $this->executeViaPistonProject($files, $mainClass, $input);
+            }
             // Extract the simple class name from the fully qualified name
             $mainClassSimpleName = $this->extractSimpleClassName($mainClass);
             
@@ -448,6 +459,166 @@ class JavaExecutionService
             'stderr' => $stderr,
             'executionTime' => round($executionTime, 3),
         ];
+    }
+
+    /**
+     * Execute single-file Java via Piston API
+     *
+     * @param string $code
+     * @param string|null $input
+     * @return array
+     */
+    protected function executeViaPistonSingle(string $code, ?string $input = null): array
+    {
+        try {
+            $className = $this->extractClassName($code) ?? 'Main';
+            $javaVersion = env('PISTON_JAVA_VERSION', '21.0.0');
+            $baseUrl = rtrim((string) env('PISTON_URL', 'https://emkc.org/api/v2/piston'), '/');
+            $compileTimeoutMs = (int) (env('PISTON_COMPILE_TIMEOUT_MS', 10000));
+            $runTimeoutMs = (int) (env('PISTON_RUN_TIMEOUT_MS', $this->maxExecutionTime * 1000));
+            $memoryLimit = (int) (env('PISTON_RUN_MEMORY_LIMIT', 256)); // MB
+
+            $payload = [
+                'language' => 'java',
+                'version' => $javaVersion,
+                'files' => [
+                    [
+                        'name' => $className . '.java',
+                        'content' => $code,
+                    ],
+                ],
+                'stdin' => $input ?? '',
+                'args' => [],
+                'compile_timeout' => $compileTimeoutMs,
+                'run_timeout' => $runTimeoutMs,
+                'compile_memory_limit' => -1,
+                'run_memory_limit' => $memoryLimit,
+            ];
+
+            $response = Http::timeout(max(10, (int) ceil(($compileTimeoutMs + $runTimeoutMs) / 1000) + 5))
+                ->acceptJson()
+                ->post($baseUrl . '/execute', $payload);
+
+            if (!$response->ok()) {
+                return [
+                    'success' => false,
+                    'stdout' => '',
+                    'stderr' => 'Remote executor error: HTTP ' . $response->status(),
+                    'executionTime' => 0,
+                ];
+            }
+
+            $data = $response->json();
+
+            $compile = $data['compile'] ?? null;
+            $run = $data['run'] ?? null;
+
+            $compileErr = is_array($compile) ? ($compile['stderr'] ?? ($compile['output'] ?? '')) : '';
+            $runErr = is_array($run) ? ($run['stderr'] ?? '') : '';
+
+            $stderr = trim($compileErr . (strlen($compileErr) && strlen($runErr) ? "\n" : '') . $runErr);
+
+            return [
+                'success' => empty($stderr) && (($run['code'] ?? 0) === 0),
+                'stdout' => (string) ($run['stdout'] ?? ''),
+                'stderr' => (string) $stderr,
+                'executionTime' => 0,
+            ];
+        } catch (Exception $e) {
+            Log::error('Piston single-file execution error: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'stdout' => '',
+                'stderr' => 'Remote executor error: ' . $e->getMessage(),
+                'executionTime' => 0,
+            ];
+        }
+    }
+
+    /**
+     * Execute multi-file Java project via Piston API
+     *
+     * @param array $files
+     * @param string $mainClass Fully qualified main class (e.g., com.example.Main)
+     * @param string|null $input
+     * @return array
+     */
+    protected function executeViaPistonProject(array $files, string $mainClass, ?string $input = null): array
+    {
+        try {
+            $javaVersion = env('PISTON_JAVA_VERSION', '21.0.0');
+            $baseUrl = rtrim((string) env('PISTON_URL', 'https://emkc.org/api/v2/piston'), '/');
+            $compileTimeoutMs = (int) (env('PISTON_COMPILE_TIMEOUT_MS', 15000));
+            $runTimeoutMs = (int) (env('PISTON_RUN_TIMEOUT_MS', $this->maxExecutionTime * 1000));
+            $memoryLimit = (int) (env('PISTON_RUN_MEMORY_LIMIT', 256));
+
+            $pistonFiles = [];
+            foreach ($files as $file) {
+                if (!isset($file['path']) || !isset($file['content'])) {
+                    continue;
+                }
+                // Ensure .java filenames
+                $name = ltrim($file['path'], '/');
+                if (!Str::endsWith($name, '.java')) {
+                    $name .= '.java';
+                }
+                $pistonFiles[] = [
+                    'name' => $name,
+                    'content' => (string) $file['content'],
+                ];
+            }
+
+            // Add a small launcher if mainClass is provided and Piston needs args
+            $args = ['-cp', '.', $mainClass];
+
+            $payload = [
+                'language' => 'java',
+                'version' => $javaVersion,
+                'files' => $pistonFiles,
+                'stdin' => $input ?? '',
+                'args' => [],
+                'compile_timeout' => $compileTimeoutMs,
+                'run_timeout' => $runTimeoutMs,
+                'compile_memory_limit' => -1,
+                'run_memory_limit' => $memoryLimit,
+            ];
+
+            $response = Http::timeout(max(12, (int) ceil(($compileTimeoutMs + $runTimeoutMs) / 1000) + 5))
+                ->acceptJson()
+                ->post($baseUrl . '/execute', $payload);
+
+            if (!$response->ok()) {
+                return [
+                    'success' => false,
+                    'stdout' => '',
+                    'stderr' => 'Remote executor error: HTTP ' . $response->status(),
+                    'executionTime' => 0,
+                ];
+            }
+
+            $data = $response->json();
+            $compile = $data['compile'] ?? null;
+            $run = $data['run'] ?? null;
+
+            $compileErr = is_array($compile) ? ($compile['stderr'] ?? ($compile['output'] ?? '')) : '';
+            $runErr = is_array($run) ? ($run['stderr'] ?? '') : '';
+            $stderr = trim($compileErr . (strlen($compileErr) && strlen($runErr) ? "\n" : '') . $runErr);
+
+            return [
+                'success' => empty($stderr) && (($run['code'] ?? 0) === 0),
+                'stdout' => (string) ($run['stdout'] ?? ''),
+                'stderr' => (string) $stderr,
+                'executionTime' => 0,
+            ];
+        } catch (Exception $e) {
+            Log::error('Piston project execution error: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'stdout' => '',
+                'stderr' => 'Remote executor error: ' . $e->getMessage(),
+                'executionTime' => 0,
+            ];
+        }
     }
 
     /**
