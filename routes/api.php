@@ -104,12 +104,14 @@ Route::get('/test-ai', function() {
     }
 });
 
-// AI Tutor routes - temporarily public for testing
-Route::post('/tutor/chat', [AITutorController::class, 'chat']);
-Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
-Route::post('/tutor/execute-project', [AITutorController::class, 'executeProject']);
-Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
-Route::post('/tutor/heartbeat', [AITutorController::class, 'heartbeat']);
+// AI Tutor routes - protect in production
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/tutor/chat', [AITutorController::class, 'chat']);
+    Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
+    Route::post('/tutor/execute-project', [AITutorController::class, 'executeProject']);
+    Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
+    Route::post('/tutor/heartbeat', [AITutorController::class, 'heartbeat']);
+});
 
 // Learning topics public routes
 Route::get('/topics', [LearningTopicController::class, 'index']);
@@ -147,34 +149,7 @@ Route::prefix('practice')->group(function () {
     Route::post('/session/signup-prompt', [PracticeController::class, 'sendSignupPrompt']);
 });
 
-// Test routes for development only (REMOVE IN PRODUCTION)
-Route::post('/test-projects', [ProjectController::class, 'testStore']);
-Route::put('/test-projects/{id}', [ProjectController::class, 'update'])->withoutMiddleware(['auth:sanctum']);
-
-// Testing route - remove in production
-Route::get('/test-auth', function(Request $request) {
-    $headers = $request->headers->all();
-    $authHeader = $request->header('Authorization');
-    $isAuthenticated = Auth::check();
-    $user = Auth::user();
-    
-    return response()->json([
-        'success' => true,
-        'message' => 'Auth test route',
-        'is_authenticated' => $isAuthenticated,
-        'auth_header' => $authHeader ? substr($authHeader, 0, 15) . '...' : 'Not present',
-        'user' => $isAuthenticated ? [
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email
-        ] : null,
-        'request_details' => [
-            'method' => $request->method(),
-            'content_type' => $request->header('Content-Type'),
-            'accept' => $request->header('Accept')
-        ]
-    ]);
-});
+// Remove dev test routes for production
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {

@@ -41,29 +41,50 @@ class JavaExecutionService
             if (!$testCases || empty($testCases)) {
                 return $this->executeJavaCode($code, $input);
             }
+
+            // Choose execution provider
+            $provider = strtolower((string) env('CODE_EXECUTION_PROVIDER', 'local'));
             
+            // Piston path: compile+run remotely per test case (simple, robust)
+            if ($provider === 'piston') {
+                $testResults = [];
+                $allPassed = true;
+                foreach ($testCases as $index => $testCase) {
+                    $testInput = $testCase['input'] ?? '';
+                    $expectedOutput = trim($testCase['expected_output'] ?? '');
+                    $result = $this->executeViaPistonSingle($code, $testInput);
+                    $actualOutput = trim((string) ($result['stdout'] ?? ''));
+                    $passed = ($actualOutput === $expectedOutput) && ($result['success'] ?? false);
+                    $testResults[] = [
+                        'passed' => $passed,
+                        'expected' => $expectedOutput,
+                        'actual' => $actualOutput,
+                        'error' => ($result['stderr'] ?? null)
+                    ];
+                    if (!$passed) { $allPassed = false; }
+                }
+                return [
+                    'success' => $allPassed,
+                    'test_results' => $testResults,
+                    'execution_time' => 0,
+                ];
+            }
+
+            // Local path: compile once and run tests
             // Extract the class name from the code
             $className = $this->extractClassName($code);
-            
             if (!$className) {
                 return [
                     'error' => 'Could not determine class name from code. Make sure you have a public class declaration.',
                     'execution_time' => 0,
                 ];
             }
-            
-            // Create a unique directory for this execution
             $executionId = Str::uuid()->toString();
             $executionDir = $this->tempDir . '/' . $executionId;
             File::makeDirectory($executionDir, 0755, true);
-            
-            // Write the code to a file
             $filePath = $executionDir . '/' . $className . '.java';
             File::put($filePath, $code);
-            
-            // Compile the code
             $compileResult = $this->compileJavaCode($filePath, $executionDir);
-            
             if (!$compileResult['success']) {
                 $this->cleanUp($executionDir);
                 return [
@@ -71,52 +92,33 @@ class JavaExecutionService
                     'execution_time' => 0,
                 ];
             }
-            
-            // Run test cases
             $testResults = [];
             $allPassed = true;
-            
             foreach ($testCases as $index => $testCase) {
                 $testInput = $testCase['input'] ?? '';
                 $expectedOutput = trim($testCase['expected_output'] ?? '');
-                
-                // Write test input to file
                 $inputFile = null;
                 if (!empty($testInput)) {
                     $inputFile = $executionDir . '/test_input_' . $index . '.txt';
                     File::put($inputFile, $testInput);
                 }
-                
-                // Execute with this test case
                 $result = $this->runJavaCode($className, $executionDir, $inputFile);
-                
                 $actualOutput = trim($result['stdout'] ?? '');
                 $passed = ($actualOutput === $expectedOutput) && $result['success'];
-                
                 $testResults[] = [
                     'passed' => $passed,
                     'expected' => $expectedOutput,
                     'actual' => $actualOutput,
                     'error' => $result['stderr'] ?? null
                 ];
-                
-                if (!$passed) {
-                    $allPassed = false;
-                }
-                
-                // Clean up test input file
-                if ($inputFile && File::exists($inputFile)) {
-                    File::delete($inputFile);
-                }
+                if (!$passed) { $allPassed = false; }
+                if ($inputFile && File::exists($inputFile)) { File::delete($inputFile); }
             }
-            
-            // Clean up temporary files
             $this->cleanUp($executionDir);
-            
             return [
                 'success' => $allPassed,
                 'test_results' => $testResults,
-                'execution_time' => 0, // We can add timing if needed
+                'execution_time' => 0,
             ];
             
         } catch (Exception $e) {
