@@ -36,23 +36,11 @@ class PracticeController extends Controller
      */
     private function getOrCreateUserId(Request $request)
     {
-        // If user is authenticated, use their ID
+        // Platform policy: only authenticated users
         if (Auth::check()) {
             return Auth::id();
         }
-
-        // For guest users, try to get from cookie first
-        $guestUserId = $request->cookie('guest_user_id');
-        
-        if (!$guestUserId) {
-            // Create a new guest user ID
-            $guestUserId = 'guest_' . Str::random(8);
-            
-            // Set cookie for 24 hours
-            cookie()->queue('guest_user_id', $guestUserId, 60 * 24);
-        }
-        
-        return $guestUserId;
+        abort(401, 'Authentication required');
     }
 
     /**
@@ -170,6 +158,13 @@ class PracticeController extends Controller
     public function getProblem($id)
     {
         try {
+            // Enforce authentication explicitly to avoid masking 401 as 500
+            if (!Auth::check()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Authentication required'
+                ], 401);
+            }
             $problem = PracticeProblem::findOrFail($id);
             
             // Add user attempt info if authenticated
@@ -290,7 +285,7 @@ class PracticeController extends Controller
             }
             
             // Create an attempt record
-            $attempt = PracticeAttempt::create([
+            $attemptData = [
                 'user_id' => $userId,
                 'problem_id' => $id,
                 'submitted_code' => $request->code,
@@ -303,7 +298,34 @@ class PracticeController extends Controller
                 'test_case_results' => $testResults,
                 'execution_time_ms' => $executionResult['execution_time'] ?? 0,
                 'status' => 'evaluated'
-            ]);
+            ];
+            // Attribution: accept explicit chat_message_id or fallback to latest chat
+            try {
+                $chatId = $request->input('chat_message_id');
+                if ($chatId) {
+                    $msg = \App\Models\ChatMessage::where('id', $chatId)->where('user_id', Auth::id())->first();
+                    if ($msg) {
+                        $attemptData['attribution_chat_message_id'] = $msg->id;
+                        $attemptData['attribution_model'] = $msg->model;
+                        $attemptData['attribution_confidence'] = 'explicit';
+                        $attemptData['attribution_delay_sec'] = now()->diffInSeconds(\Carbon\Carbon::parse($msg->created_at));
+                    }
+                } else {
+                    // Fallback: latest message within 60 minutes
+                    $msg = \App\Models\ChatMessage::where('user_id', Auth::id())
+                        ->orderByDesc('created_at')->first();
+                    if ($msg && now()->diffInMinutes(\Carbon\Carbon::parse($msg->created_at)) <= 60) {
+                        $attemptData['attribution_chat_message_id'] = $msg->id;
+                        $attemptData['attribution_model'] = $msg->model;
+                        $attemptData['attribution_confidence'] = 'temporal';
+                        $attemptData['attribution_delay_sec'] = now()->diffInSeconds(\Carbon\Carbon::parse($msg->created_at));
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('Attribution set failed (practice): ' . $e->getMessage());
+            }
+
+            $attempt = PracticeAttempt::create($attemptData);
             
             // Calculate points using Code Execution Reward Formula with Complexity
             $complexity = \App\Services\Progress\ProgressService::calculateCodeComplexity($request->code ?? '');
@@ -348,6 +370,13 @@ class PracticeController extends Controller
                     'next_problems' => $allTestsPassed ? $problem->getRecommendedProblems() : []
                 ]
             ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            // Preserve HTTP status codes from abort()/auth checks
+            Log::error('Error submitting practice solution: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ], (int) $e->getStatusCode());
         } catch (\Exception $e) {
             Log::error('Error submitting practice solution: ' . $e->getMessage());
             return response()->json([

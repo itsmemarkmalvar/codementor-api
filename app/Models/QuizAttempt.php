@@ -27,6 +27,10 @@ class QuizAttempt extends Model
         'time_spent_seconds',
         'attempt_number',
         'completed_at',
+        'attribution_chat_message_id',
+        'attribution_model',
+        'attribution_confidence',
+        'attribution_delay_sec',
     ];
 
     /**
@@ -44,6 +48,7 @@ class QuizAttempt extends Model
         'time_spent_seconds' => 'integer',
         'attempt_number' => 'integer',
         'passed' => 'boolean',
+        'attribution_delay_sec' => 'integer',
     ];
 
     /**

@@ -31,6 +31,10 @@ class PracticeAttempt extends Model
         'feedback',
         'status',  // 'started', 'in_progress', 'submitted', 'evaluated'
         'struggle_points', // Areas where user struggled
+        'attribution_chat_message_id',
+        'attribution_model',
+        'attribution_confidence',
+        'attribution_delay_sec',
     ];
 
     /**
@@ -46,6 +50,7 @@ class PracticeAttempt extends Model
         'runtime_errors' => 'array',
         'test_case_results' => 'array',
         'struggle_points' => 'array',
+        'attribution_delay_sec' => 'integer',
     ];
 
     /**

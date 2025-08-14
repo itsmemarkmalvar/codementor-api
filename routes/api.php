@@ -46,6 +46,10 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 
+// Health (public)
+Route::get('/health/piston', [HealthController::class, 'piston']);
+Route::get('/health/judge0', [HealthController::class, 'judge0']);
+
 // Testing route - remove in production
 Route::get('/test-user-create', function() {
     try {
@@ -136,21 +140,23 @@ Route::get('/all-lesson-plans', [LessonController::class, 'getAllLessonPlans']);
 
 // Remove public quiz read routes; quizzes require auth
 
-// Public practice routes (for demo and guest users)
+// Practice routes (reads that rely on user context require auth; writes require auth)
 Route::prefix('practice')->group(function () {
     Route::get('/categories', [PracticeController::class, 'getCategories']);
     Route::get('/categories/{categoryId}/problems', [PracticeController::class, 'getProblemsByCategory']);
-    Route::get('/problems/{id}', [PracticeController::class, 'getProblem']);
-    Route::post('/problems/{id}/solution', [PracticeController::class, 'submitSolution']);
+    // Controller enforces Auth::check(); ensure Sanctum authenticates this route
+    Route::middleware('auth:sanctum')->get('/problems/{id}', [PracticeController::class, 'getProblem']);
+    // Protect solution submission
+    Route::middleware('auth:sanctum')->post('/problems/{id}/solution', [PracticeController::class, 'submitSolution']);
     Route::get('/problems/{id}/hint', [PracticeController::class, 'getHint']);
     Route::get('/problems/{id}/resources', [PracticeController::class, 'getProblemResources']);
     Route::get('/problems/{id}/resources/suggestions', [PracticeController::class, 'getSuggestedResources']);
     Route::get('/all-data', [PracticeController::class, 'getAllPracticeData']);
     
     // User session and statistics
-    Route::post('/session/init', [PracticeController::class, 'initializeUserSession']);
-    Route::get('/session/stats', [PracticeController::class, 'getUserSessionStats']);
-    Route::post('/session/signup-prompt', [PracticeController::class, 'sendSignupPrompt']);
+    Route::middleware('auth:sanctum')->post('/session/init', [PracticeController::class, 'initializeUserSession']);
+    Route::middleware('auth:sanctum')->get('/session/stats', [PracticeController::class, 'getUserSessionStats']);
+    Route::middleware('auth:sanctum')->post('/session/signup-prompt', [PracticeController::class, 'sendSignupPrompt']);
 });
 
 // Remove dev test routes for production
@@ -228,7 +234,4 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Analytics
     Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
-    // Health
-    Route::get('/health/piston', [HealthController::class, 'piston']);
-    Route::get('/health/judge0', [HealthController::class, 'judge0']);
 }); 

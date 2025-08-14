@@ -170,8 +170,12 @@ class AnalyticsController extends Controller
         $users = $userModelAgg->pluck('user_id')->unique();
         $paired = [];
         foreach ($users as $u) {
-            $g = $userModelAgg->firstWhere(fn($x)=>$x['user_id']===$u && $x['model']==='gemini');
-            $t = $userModelAgg->firstWhere(fn($x)=>$x['user_id']===$u && $x['model']==='together');
+            $g = $userModelAgg->first(function ($x) use ($u) {
+                return ($x['user_id'] === $u) && ($x['model'] === 'gemini');
+            });
+            $t = $userModelAgg->first(function ($x) use ($u) {
+                return ($x['user_id'] === $u) && ($x['model'] === 'together');
+            });
             if ($g && $t) {
                 $paired[] = [
                     'user_id' => $u,

@@ -122,15 +122,29 @@ class QuizController extends Controller
                 ->where('quiz_id', $id)
                 ->count() + 1;
             
-            // Create new attempt
-            $attempt = QuizAttempt::create([
+            // Create new attempt (with optional attribution if provided now)
+            $attemptData = [
                 'user_id' => $user->id,
                 'quiz_id' => $id,
                 'question_responses' => json_encode([]),
                 'score' => 0,
                 'max_possible_score' => $quiz->getMaxScore(),
                 'attempt_number' => $attemptNumber
-            ]);
+            ];
+            try {
+                $chatId = $request->input('chat_message_id');
+                if ($chatId) {
+                    $msg = \App\Models\ChatMessage::where('id', $chatId)->where('user_id', $user->id)->first();
+                    if ($msg) {
+                        $attemptData['attribution_chat_message_id'] = $msg->id;
+                        $attemptData['attribution_model'] = $msg->model;
+                        $attemptData['attribution_confidence'] = 'explicit';
+                        $attemptData['attribution_delay_sec'] = now()->diffInSeconds(\Carbon\Carbon::parse($msg->created_at));
+                    }
+                }
+            } catch (\Throwable $e) { \Log::warning('Attribution set failed (quiz start): ' . $e->getMessage()); }
+
+            $attempt = QuizAttempt::create($attemptData);
             
             return response()->json([
                 'attempt' => $attempt,
@@ -208,6 +222,20 @@ class QuizController extends Controller
             $attempt->time_spent_seconds = $validated['time_spent_seconds'] ?? $timeSpent;
             $attempt->passed = $passed;
             $attempt->completed_at = now();
+            // If no explicit attribution recorded earlier, attempt temporal attribution on submit
+            try {
+                if (!$attempt->attribution_chat_message_id) {
+                    $msg = \App\Models\ChatMessage::where('user_id', $user->id)
+                        ->orderByDesc('created_at')->first();
+                    if ($msg && now()->diffInMinutes(\Carbon\Carbon::parse($msg->created_at)) <= 60) {
+                        $attempt->attribution_chat_message_id = $msg->id;
+                        $attempt->attribution_model = $msg->model;
+                        $attempt->attribution_confidence = 'temporal';
+                        $attempt->attribution_delay_sec = now()->diffInSeconds(\Carbon\Carbon::parse($msg->created_at));
+                    }
+                }
+            } catch (\Throwable $e) { \Log::warning('Attribution set failed (quiz submit): ' . $e->getMessage()); }
+
             $attempt->save();
             
             return response()->json([
