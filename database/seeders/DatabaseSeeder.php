@@ -30,6 +30,8 @@ class DatabaseSeeder extends Seeder
         
         // Seed lesson plans after topics are created
         $this->call(LessonPlanSeeder::class);
+        // Ensure any missing core basics plans are present
+        $this->call(BasicsCoreLessonPlansSeeder::class);
         
         // Seed advanced Java lesson plans
         $this->call(AdvancedJavaLessonPlanSeeder::class);

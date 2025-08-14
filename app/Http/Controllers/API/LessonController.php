@@ -23,11 +23,29 @@ class LessonController extends Controller
     public function getLessonPlans(Request $request, $topicId)
     {
         try {
-            $topic = LearningTopic::findOrFail($topicId);
-            $lessonPlans = LessonPlan::where('topic_id', $topicId)
-                            ->where('is_published', true)
-                            ->orderBy('id')
-                            ->get();
+			$topic = LearningTopic::findOrFail($topicId);
+			$includeUnpublished = $request->boolean('include_unpublished', false);
+			$query = LessonPlan::where('topic_id', $topicId);
+			if (!$includeUnpublished) {
+				$query->where('is_published', true);
+			}
+			// Enforce a canonical order for Java Basics lessons
+			if ($topic->title === 'Java Basics') {
+				$sequence = [
+					'Java Fundamentals',
+					'Java Control Flow',
+					'Java Methods in Depth',
+					'Java Object-Oriented Programming',
+					'Java Exception Handling',
+					'Java File I/O',
+					'Java Data Structures',
+				];
+				$quoted = array_map(function ($t) { return "'".str_replace("'", "\\'", $t)."'"; }, $sequence);
+				$orderExpr = 'FIELD(title, '.implode(', ', $quoted).')';
+				$lessonPlans = $query->orderByRaw($orderExpr)->orderBy('id')->get();
+			} else {
+				$lessonPlans = $query->orderBy('id')->get();
+			}
             
             return response()->json([
                 'status' => 'success',
@@ -47,22 +65,18 @@ class LessonController extends Controller
     /**
      * Get all lesson plans across all topics.
      */
-    public function getAllLessonPlans(Request $request)
+	public function getAllLessonPlans(Request $request)
     {
         try {
-            // Log the query we're about to run
-            Log::info('Getting all lesson plans with is_published filter');
-            
-            // Get all lesson plans, without the published filter for debugging
-            $allPlans = LessonPlan::all();
-            Log::info('Total lesson plans (without is_published filter): ' . $allPlans->count());
-            
-            // Now get the filtered plans
-            $lessonPlans = LessonPlan::where('is_published', true)
-                            ->orderBy('id')
-                            ->get();
-            
-            Log::info('Filtered lesson plans (with is_published filter): ' . $lessonPlans->count());
+			$includeUnpublished = $request->boolean('include_unpublished', false);
+			Log::info('Getting lesson plans', ['include_unpublished' => $includeUnpublished]);
+			
+			$base = LessonPlan::query();
+			if (!$includeUnpublished) { $base->where('is_published', true); }
+			// Prefer a stable order across topics: topic then title, with Java Basics in canonical order
+			$lessonPlans = $base->orderBy('topic_id')
+				->orderBy('id')
+				->get();
             
             // Attach topic names to each lesson plan
             $lessonPlans->each(function($plan) {
@@ -87,12 +101,16 @@ class LessonController extends Controller
     /**
      * Get a specific lesson plan with its modules.
      */
-    public function getLessonPlan(Request $request, $lessonPlanId)
+	public function getLessonPlan(Request $request, $lessonPlanId)
     {
         try {
-            $lessonPlan = LessonPlan::with(['modules' => function($query) {
-                $query->where('is_published', true)->orderBy('order_index');
-            }])->findOrFail($lessonPlanId);
+			$includeUnpublished = $request->boolean('include_unpublished', false);
+			$lessonPlan = LessonPlan::with(['modules' => function($query) use ($includeUnpublished) {
+				if (!$includeUnpublished) {
+					$query->where('is_published', true);
+				}
+				$query->orderBy('order_index');
+			}])->findOrFail($lessonPlanId);
             
             // Also fetch the topic it belongs to
             $topic = LearningTopic::findOrFail($lessonPlan->topic_id);
@@ -115,14 +133,16 @@ class LessonController extends Controller
     /**
      * Get all modules for a specific lesson plan.
      */
-    public function getLessonPlanModules(Request $request, $lessonPlanId)
+	public function getLessonPlanModules(Request $request, $lessonPlanId)
     {
         try {
-            $lessonPlan = LessonPlan::findOrFail($lessonPlanId);
-            $modules = LessonModule::where('lesson_plan_id', $lessonPlanId)
-                        ->where('is_published', true)
-                        ->orderBy('order_index')
-                        ->get();
+			$lessonPlan = LessonPlan::findOrFail($lessonPlanId);
+			$includeUnpublished = $request->boolean('include_unpublished', false);
+			$modulesQuery = LessonModule::where('lesson_plan_id', $lessonPlanId);
+			if (!$includeUnpublished) {
+				$modulesQuery->where('is_published', true);
+			}
+			$modules = $modulesQuery->orderBy('order_index')->get();
             
             return response()->json([
                 'status' => 'success',
