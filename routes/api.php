@@ -236,6 +236,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Analytics
     Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
+    Route::get('/analytics/split-screen', [AnalyticsController::class, 'getSplitScreenAnalytics']);
     
     // Split-screen session management
     Route::prefix('sessions')->group(function () {

@@ -276,6 +276,11 @@ class AnalyticsController extends Controller
             elseif ($succ['ci_high'] < 0) { $winner = 'together'; }
         }
 
+        // Enhanced TICA metrics: Preference rates and clarification requests
+        $preferenceRates = $this->calculatePreferenceRates($userId, $start);
+        $clarificationMetrics = $this->calculateClarificationMetrics($userId, $start);
+        $splitScreenMetrics = $this->calculateSplitScreenMetrics($userId, $start);
+
         return response()->json([
             'window' => $window,
             'k_runs' => $k,
@@ -293,7 +298,202 @@ class AnalyticsController extends Controller
             'paired' => $pairedStats,
             'winner' => $winner,
             'per_reply' => $perReply,
+            'enhanced_tica' => [
+                'preference_rates' => $preferenceRates,
+                'clarification_metrics' => $clarificationMetrics,
+                'split_screen_metrics' => $splitScreenMetrics,
+            ],
         ]);
+    }
+
+    /**
+     * Calculate AI preference rates from split-screen sessions
+     */
+    private function calculatePreferenceRates($userId, $startDate)
+    {
+        $sessions = \App\Models\SplitScreenSession::where('user_id', $userId)
+            ->where('started_at', '>=', $startDate)
+            ->whereNotNull('user_choice')
+            ->get();
+
+        $totalChoices = $sessions->count();
+        if ($totalChoices === 0) {
+            return [
+                'total_choices' => 0,
+                'gemini_preference_rate' => 0,
+                'together_preference_rate' => 0,
+                'both_preference_rate' => 0,
+                'neither_preference_rate' => 0,
+            ];
+        }
+
+        $choices = $sessions->pluck('user_choice');
+        
+        return [
+            'total_choices' => $totalChoices,
+            'gemini_preference_rate' => round(($choices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2),
+            'together_preference_rate' => round(($choices->filter(fn($c) => $c === 'together')->count() / $totalChoices) * 100, 2),
+            'both_preference_rate' => round(($choices->filter(fn($c) => $c === 'both')->count() / $totalChoices) * 100, 2),
+            'neither_preference_rate' => round(($choices->filter(fn($c) => $c === 'neither')->count() / $totalChoices) * 100, 2),
+        ];
+    }
+
+    /**
+     * Calculate clarification request metrics
+     */
+    private function calculateClarificationMetrics($userId, $startDate)
+    {
+        $sessions = \App\Models\SplitScreenSession::where('user_id', $userId)
+            ->where('started_at', '>=', $startDate)
+            ->get();
+
+        $totalSessions = $sessions->count();
+        $clarificationSessions = $sessions->where('clarification_needed', true)->count();
+
+        return [
+            'total_sessions' => $totalSessions,
+            'clarification_requests' => $clarificationSessions,
+            'clarification_rate' => $totalSessions > 0 ? round(($clarificationSessions / $totalSessions) * 100, 2) : 0,
+            'avg_session_duration_minutes' => $totalSessions > 0 ? round($sessions->avg('duration_minutes'), 2) : 0,
+        ];
+    }
+
+    /**
+     * Calculate split-screen specific metrics
+     */
+    private function calculateSplitScreenMetrics($userId, $startDate)
+    {
+        $sessions = \App\Models\SplitScreenSession::where('user_id', $userId)
+            ->where('started_at', '>=', $startDate)
+            ->get();
+
+        $totalSessions = $sessions->count();
+        if ($totalSessions === 0) {
+            return [
+                'total_sessions' => 0,
+                'avg_engagement_score' => 0,
+                'quiz_trigger_rate' => 0,
+                'practice_trigger_rate' => 0,
+                'engagement_threshold_rate' => 0,
+            ];
+        }
+
+        return [
+            'total_sessions' => $totalSessions,
+            'avg_engagement_score' => round($sessions->avg('engagement_score'), 2),
+            'quiz_trigger_rate' => round(($sessions->where('quiz_triggered', true)->count() / $totalSessions) * 100, 2),
+            'practice_trigger_rate' => round(($sessions->where('practice_triggered', true)->count() / $totalSessions) * 100, 2),
+            'engagement_threshold_rate' => round(($sessions->filter(fn($s) => $s->shouldTriggerEngagement())->count() / $totalSessions) * 100, 2),
+        ];
+    }
+
+    /**
+     * Get enhanced analytics for split-screen sessions
+     */
+    public function getSplitScreenAnalytics(Request $request)
+    {
+        $userId = Auth::id();
+        $window = $request->get('window', '30d');
+        
+        // Window start
+        $now = Carbon::now();
+        $start = match (true) {
+            str_ends_with($window, 'd') => $now->copy()->subDays((int) rtrim($window, 'd')),
+            str_ends_with($window, 'w') => $now->copy()->subWeeks((int) rtrim($window, 'w')),
+            default => $now->copy()->subDays(30),
+        };
+
+        $sessions = \App\Models\SplitScreenSession::where('user_id', $userId)
+            ->where('started_at', '>=', $start)
+            ->with(['topic', 'chatMessages'])
+            ->get();
+
+        $totalSessions = $sessions->count();
+        
+        if ($totalSessions === 0) {
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'window' => $window,
+                    'total_sessions' => 0,
+                    'preference_rates' => null,
+                    'clarification_metrics' => null,
+                    'engagement_metrics' => null,
+                    'session_breakdown' => [],
+                ]
+            ]);
+        }
+
+        // Calculate preference rates
+        $preferenceRates = $this->calculatePreferenceRates($userId, $start);
+        
+        // Calculate clarification metrics
+        $clarificationMetrics = $this->calculateClarificationMetrics($userId, $start);
+        
+        // Calculate engagement metrics
+        $engagementMetrics = [
+            'avg_engagement_score' => round($sessions->avg('engagement_score'), 2),
+            'max_engagement_score' => $sessions->max('engagement_score'),
+            'engagement_threshold_rate' => round(($sessions->filter(fn($s) => $s->shouldTriggerEngagement())->count() / $totalSessions) * 100, 2),
+            'quiz_trigger_rate' => round(($sessions->where('quiz_triggered', true)->count() / $totalSessions) * 100, 2),
+            'practice_trigger_rate' => round(($sessions->where('practice_triggered', true)->count() / $totalSessions) * 100, 2),
+            'avg_session_duration_minutes' => round($sessions->avg('duration_minutes'), 2),
+        ];
+
+        // Session breakdown by topic
+        $sessionBreakdown = $sessions->groupBy('topic_id')
+            ->map(function ($topicSessions, $topicId) {
+                $topic = $topicSessions->first()->topic;
+                return [
+                    'topic_id' => $topicId,
+                    'topic_title' => $topic ? $topic->title : 'Unknown Topic',
+                    'session_count' => $topicSessions->count(),
+                    'avg_engagement_score' => round($topicSessions->avg('engagement_score'), 2),
+                    'preference_breakdown' => $this->calculateTopicPreferenceBreakdown($topicSessions),
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'window' => $window,
+                'total_sessions' => $totalSessions,
+                'preference_rates' => $preferenceRates,
+                'clarification_metrics' => $clarificationMetrics,
+                'engagement_metrics' => $engagementMetrics,
+                'session_breakdown' => $sessionBreakdown,
+            ]
+        ]);
+    }
+
+    /**
+     * Calculate preference breakdown for a specific topic
+     */
+    private function calculateTopicPreferenceBreakdown($sessions)
+    {
+        $sessionsWithChoices = $sessions->whereNotNull('user_choice');
+        $totalChoices = $sessionsWithChoices->count();
+        
+        if ($totalChoices === 0) {
+            return [
+                'total_choices' => 0,
+                'gemini_count' => 0,
+                'together_count' => 0,
+                'both_count' => 0,
+                'neither_count' => 0,
+            ];
+        }
+
+        $choices = $sessionsWithChoices->pluck('user_choice');
+        
+        return [
+            'total_choices' => $totalChoices,
+            'gemini_count' => $choices->filter(fn($c) => $c === 'gemini')->count(),
+            'together_count' => $choices->filter(fn($c) => $c === 'together')->count(),
+            'both_count' => $choices->filter(fn($c) => $c === 'both')->count(),
+            'neither_count' => $choices->filter(fn($c) => $c === 'neither')->count(),
+        ];
     }
 }
 
