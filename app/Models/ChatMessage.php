@@ -9,6 +9,7 @@ class ChatMessage extends Model
 {
     protected $fillable = [
         'user_id',
+        'session_id',
         'message',
         'response',
         'topic',
@@ -34,5 +35,13 @@ class ChatMessage extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the split-screen session this message belongs to.
+     */
+    public function session(): BelongsTo
+    {
+        return $this->belongsTo(SplitScreenSession::class, 'session_id');
     }
 }

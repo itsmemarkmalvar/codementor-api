@@ -15,6 +15,7 @@ use App\Http\Controllers\API\PracticeController;
 use App\Http\Controllers\API\ProjectController;
 use App\Http\Controllers\API\AnalyticsController;
 use App\Http\Controllers\API\HealthController;
+use App\Http\Controllers\API\SessionController;
 use Illuminate\Support\Facades\Auth;
 
 /*
@@ -112,10 +113,11 @@ Route::get('/test-ai', function() {
 // AI Tutor routes - protect in production
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/tutor/chat', [AITutorController::class, 'chat']);
-    Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
-    Route::post('/tutor/execute-project', [AITutorController::class, 'executeProject']);
-    Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
-    Route::post('/tutor/heartbeat', [AITutorController::class, 'heartbeat']);
+Route::post('/tutor/split-screen-chat', [AITutorController::class, 'splitScreenChat']);
+Route::post('/tutor/execute-code', [AITutorController::class, 'executeCode']);
+Route::post('/tutor/execute-project', [AITutorController::class, 'executeProject']);
+Route::post('/tutor/update-progress', [AITutorController::class, 'updateProgress']);
+Route::post('/tutor/heartbeat', [AITutorController::class, 'heartbeat']);
 });
 
 // Learning topics public routes
@@ -234,4 +236,16 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Analytics
     Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
-}); 
+    
+    // Split-screen session management
+    Route::prefix('sessions')->group(function () {
+        Route::post('/start', [SessionController::class, 'startSession']);
+        Route::get('/active', [SessionController::class, 'getActiveSession']);
+        Route::get('/{sessionId}', [SessionController::class, 'getSession']);
+        Route::post('/{sessionId}/end', [SessionController::class, 'endSession']);
+        Route::post('/{sessionId}/choice', [SessionController::class, 'recordChoice']);
+        Route::post('/{sessionId}/clarification', [SessionController::class, 'requestClarification']);
+        Route::post('/{sessionId}/engagement', [SessionController::class, 'incrementEngagement']);
+    });
+});
+

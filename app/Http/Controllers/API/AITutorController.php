@@ -1250,4 +1250,325 @@ class AITutorController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get responses from both AI models simultaneously for split-screen comparison.
+     */
+    public function splitScreenChat(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'question' => 'required|string',
+            'conversation_history' => 'nullable|array',
+            'topic_id' => 'nullable|exists:learning_topics,id',
+            'module_id' => 'nullable|exists:lesson_modules,id',
+            'session_id' => 'nullable|exists:learning_sessions,id',
+            'preferences' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            // Get the topic if provided
+            $topic = null;
+            if ($request->has('topic_id') && $request->topic_id) {
+                $topic = LearningTopic::find($request->topic_id);
+                if (!$topic) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Topic not found with ID: ' . $request->topic_id
+                    ], 404);
+                }
+            }
+
+            // Get the module if provided
+            $module = null;
+            if ($request->has('module_id') && $request->module_id) {
+                $module = LessonModule::with('lessonPlan')->find($request->module_id);
+                
+                if (!$module) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Module not found with ID: ' . $request->module_id
+                    ], 404);
+                }
+                
+                // If the module is found but no topic was specified, get the topic from the module's lesson plan
+                if ($module && !$topic && $module->lessonPlan) {
+                    $topic = $module->lessonPlan->topic;
+                }
+            }
+
+            // Get or create a session if not provided
+            $session = null;
+            if ($request->has('session_id') && $request->session_id) {
+                $session = LearningSession::find($request->session_id);
+                if (!$session) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Session not found with ID: ' . $request->session_id
+                    ], 404);
+                }
+            } else if ($topic) {
+                // Create a new session for this topic if none provided
+                $userId = Auth::id() ?? 1;
+                
+                try {
+                    $session = LearningSession::create([
+                        'user_id' => $userId,
+                        'topic_id' => $topic->id,
+                        'title' => 'Session on ' . $topic->title,
+                        'started_at' => now(),
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Failed to create new learning session', [
+                        'error' => $e->getMessage(),
+                        'user_id' => $userId,
+                        'topic_id' => $topic->id
+                    ]);
+                    // Continue without session if creation fails
+                }
+            }
+
+            // Initialize context for the AI tutor
+            $context = [];
+            
+            // If a module is provided, track progress and add module content to context
+            if ($module) {
+                $userId = Auth::id() ?? 1;
+                
+                // Track module progress
+                try {
+                    $moduleProgress = ModuleProgress::firstOrCreate(
+                        [
+                            'user_id' => $userId,
+                            'module_id' => $module->id
+                        ],
+                        [
+                            'status' => 'in_progress',
+                            'started_at' => now(),
+                            'last_activity_at' => now()
+                        ]
+                    );
+                    
+                    $moduleProgress->markAsStarted();
+                    
+                    // Add module content to context for the AI tutor
+                    $context = [
+                        'module_title' => $module->title,
+                        'module_content' => $module->content,
+                        'examples' => $module->examples,
+                        'key_points' => $module->key_points,
+                        'teaching_strategy' => $module->teaching_strategy,
+                        'common_misconceptions' => $module->common_misconceptions
+                    ];
+                    
+                    // Add guidance notes if they exist
+                    if ($module->guidance_notes) {
+                        $context['guidance_notes'] = $module->guidance_notes;
+                    }
+                    
+                    // Add any struggle points from previous interactions
+                    if ($moduleProgress->struggle_points) {
+                        $context['struggle_points'] = $moduleProgress->struggle_points;
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Failed to track module progress', [
+                        'error' => $e->getMessage(),
+                        'user_id' => $userId,
+                        'module_id' => $module->id
+                    ]);
+                    // Continue without module progress if tracking fails
+                }
+            }
+
+            // Validate question before proceeding
+            if (empty($request->question) || !is_string($request->question)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid question format. Question must be a non-empty string.'
+                ], 400);
+            }
+
+            // Ensure preferences is an array
+            $preferences = $request->preferences ?? [];
+            if (!is_array($preferences)) {
+                $preferences = [];
+            }
+
+            // Ensure conversation_history is an array and normalize/trim it to avoid model API issues
+            $conversationHistory = $request->conversation_history ?? [];
+            if (!is_array($conversationHistory)) {
+                $conversationHistory = [];
+            }
+            // Normalize entries to expected shape { role: 'user'|'assistant', content: string }
+            $normalizedHistory = [];
+            foreach ($conversationHistory as $item) {
+                if ($item === null) { continue; }
+                if (is_object($item)) { $item = (array) $item; }
+                if (!is_array($item)) { continue; }
+                $role = isset($item['role']) && strtolower($item['role']) === 'user' ? 'user' : 'assistant';
+                $content = isset($item['content']) ? (string) $item['content'] : '';
+                if (trim($content) === '') { continue; }
+                // Cap extremely long turns to keep payload reasonable
+                if (strlen($content) > 1200) {
+                    $content = substr($content, 0, 1200);
+                }
+                $normalizedHistory[] = [ 'role' => $role, 'content' => $content ];
+            }
+            // Keep only the most recent 10 turns to limit token usage
+            if (count($normalizedHistory) > 10) {
+                $normalizedHistory = array_slice($normalizedHistory, -10);
+            }
+            $conversationHistory = $normalizedHistory;
+
+            // Call both AI models sequentially (this is the most reliable approach)
+            // The frontend fix ensures only one API call is made, so both AIs will respond
+            $responses = [];
+            $errors = [];
+            
+            // Precheck for missing API keys
+            $geminiKey = config('services.gemini.api_key', env('GEMINI_API_KEY', ''));
+            $togetherKey = config('services.together.api_key', env('TOGETHER_API_KEY', ''));
+
+            // Call Gemini AI first
+            $geminiResponse = null;
+            $geminiLatency = null;
+            if (!empty($geminiKey)) {
+                try {
+                    $t0 = microtime(true);
+                    $geminiResponse = $this->geminiService->getResponse(
+                        $request->question,
+                        $conversationHistory,
+                        $preferences,
+                        $topic ? $topic->title : null
+                    );
+                    $geminiLatency = (int) round((microtime(true) - $t0) * 1000);
+                } catch (\Exception $e) {
+                    $errors['gemini'] = $e->getMessage();
+                    Log::error('Gemini AI error in split-screen chat', [
+                        'error' => $e->getMessage(),
+                        'question' => $request->question
+                    ]);
+                }
+            } else {
+                $errors['gemini'] = 'Gemini AI is not configured (missing GEMINI_API_KEY)';
+            }
+
+            // Call Together AI second
+            $togetherResponse = null;
+            $togetherLatency = null;
+            if (!empty($togetherKey)) {
+                try {
+                    $t0 = microtime(true);
+                    $togetherResponse = $this->tutorService->getResponseWithContext(
+                        $request->question,
+                        $conversationHistory,
+                        $preferences,
+                        $topic ? $topic->title : null,
+                        $context
+                    );
+                    $togetherLatency = (int) round((microtime(true) - $t0) * 1000);
+                } catch (\Exception $e) {
+                    $errors['together'] = $e->getMessage();
+                    Log::error('Together AI error in split-screen chat', [
+                        'error' => $e->getMessage(),
+                        'question' => $request->question
+                    ]);
+                }
+            } else {
+                $errors['together'] = 'Together AI is not configured (missing TOGETHER_API_KEY)';
+            }
+
+            // Save both responses
+            $userId = Auth::id() ?? 1;
+            $savedMessages = [];
+            
+            if ($geminiResponse) {
+                try {
+                    $savedMessages['gemini'] = ChatMessage::create([
+                        'user_id' => $userId,
+                        'message' => $request->question,
+                        'response' => $geminiResponse,
+                        'topic' => $topic ? $topic->title : null,
+                        'topic_id' => $topic ? $topic->id : null,
+                        'context' => !empty($context) ? json_encode($context) : null,
+                        'conversation_history' => $request->conversation_history ?? [],
+                        'preferences' => $request->preferences ?? [],
+                        'is_fallback' => false,
+                        'model' => 'gemini',
+                        'response_time_ms' => $geminiLatency,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Failed to save Gemini message', ['error' => $e->getMessage()]);
+                }
+            }
+            
+            if ($togetherResponse) {
+                try {
+                    $savedMessages['together'] = ChatMessage::create([
+                        'user_id' => $userId,
+                        'message' => $request->question,
+                        'response' => $togetherResponse,
+                        'topic' => $topic ? $topic->title : null,
+                        'topic_id' => $topic ? $topic->id : null,
+                        'context' => !empty($context) ? json_encode($context) : null,
+                        'conversation_history' => $request->conversation_history ?? [],
+                        'preferences' => $request->preferences ?? [],
+                        'is_fallback' => false,
+                        'model' => 'together',
+                        'response_time_ms' => $togetherLatency,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Failed to save Together message', ['error' => $e->getMessage()]);
+                }
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'responses' => [
+                        'gemini' => $geminiResponse ? [
+                            'response' => $geminiResponse,
+                            'message_id' => $savedMessages['gemini']->id ?? null,
+                            'response_time_ms' => $geminiLatency,
+                            'error' => null
+                        ] : [
+                            'response' => null,
+                            'message_id' => null,
+                            'response_time_ms' => null,
+                            'error' => $errors['gemini'] ?? 'Unknown error'
+                        ],
+                        'together' => $togetherResponse ? [
+                            'response' => $togetherResponse,
+                            'message_id' => $savedMessages['together']->id ?? null,
+                            'response_time_ms' => $togetherLatency,
+                            'error' => null
+                        ] : [
+                            'response' => null,
+                            'message_id' => null,
+                            'response_time_ms' => null,
+                            'error' => $errors['together'] ?? 'Unknown error'
+                        ]
+                    ],
+                    'session_id' => $session ? $session->id : null,
+                    'topic' => $topic ? $topic->title : null,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Split-screen chat error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'An error occurred while processing your request.'
+            ], 500);
+        }
+    }
 }
