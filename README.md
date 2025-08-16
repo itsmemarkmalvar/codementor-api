@@ -103,6 +103,21 @@ To obtain a Gemini API key:
 GEMINI_API_KEY=your_api_key_here
 ```
 
+### Together AI API Key
+This application also uses Together AI for comparative analysis.
+
+To obtain a Together AI API key:
+1. Go to the [Together AI Platform](https://together.ai/)
+2. Sign up or sign in to your account
+3. Navigate to the API Keys section
+4. Create a new API key
+5. Copy the API key and add it to your `.env` file:
+```
+TOGETHER_API_KEY=your_api_key_here
+```
+
+**Note**: Both API keys are required for the split-screen comparative analysis feature to work properly. If either key is missing, the corresponding AI model will show a configuration error message.
+
 ## Running the application
 
 Start the development server:
@@ -121,14 +136,16 @@ By default, the API will be available at http://localhost:8000.
 - `GET /api/user` - Get current user (requires authentication)
 
 ### AI Tutoring
-- `POST /api/tutor/response` - Get AI tutor response (requires authentication)
-- `POST /api/tutor/execute-java` - Execute Java code (requires authentication)
-- `POST /api/tutor/evaluate-code` - Evaluate Java code (requires authentication)
+- `POST /api/tutor/chat` - Get AI tutor response (requires authentication)
+- `POST /api/tutor/split-screen-chat` - Get responses from both AI models (requires authentication)
+- `POST /api/tutor/execute-code` - Execute Java code (requires authentication)
+- `POST /api/tutor/execute-project` - Execute Java project (requires authentication)
 
 ## Environment Variables
 
 Important environment variables:
 - `GEMINI_API_KEY` - Google Gemini API key for AI tutoring
+- `TOGETHER_API_KEY` - Together AI API key for comparative analysis
 
 ## Database Seeders
 
@@ -217,4 +234,3 @@ Suppression:
 - For paired stats, report mean/SE only when paired sample `n ≥ Nmin`
 
 API: `GET /api/analytics/models/compare?window=30d&k_runs=3&lookahead_min=30&topic_id=&difficulty=&nmin=5`
-

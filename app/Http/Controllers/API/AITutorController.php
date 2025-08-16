@@ -1425,6 +1425,12 @@ class AITutorController extends Controller
                 $normalizedHistory = array_slice($normalizedHistory, -10);
             }
             $conversationHistory = $normalizedHistory;
+            
+            // Create a simplified conversation history for Together AI to prevent validation errors
+            $togetherConversationHistory = $normalizedHistory;
+            if (count($togetherConversationHistory) > 2) {
+                $togetherConversationHistory = array_slice($togetherConversationHistory, -2);
+            }
 
             // Call both AI models sequentially (this is the most reliable approach)
             // The frontend fix ensures only one API call is made, so both AIs will respond
@@ -1434,6 +1440,17 @@ class AITutorController extends Controller
             // Precheck for missing API keys
             $geminiKey = config('services.gemini.api_key', env('GEMINI_API_KEY', ''));
             $togetherKey = config('services.together.api_key', env('TOGETHER_API_KEY', ''));
+            
+            // Debug logging for API keys
+            Log::info('Split-screen chat API key check', [
+                'geminiKey_exists' => !empty($geminiKey),
+                'geminiKey_length' => strlen($geminiKey),
+                'togetherKey_exists' => !empty($togetherKey),
+                'togetherKey_length' => strlen($togetherKey),
+                'togetherKey_prefix' => substr($togetherKey, 0, 10) . '...',
+                'env_together_key' => env('TOGETHER_API_KEY', 'NOT_SET'),
+                'config_together_key' => config('services.together.api_key', 'NOT_SET')
+            ]);
 
             // Call Gemini AI first
             $geminiResponse = null;
@@ -1456,7 +1473,7 @@ class AITutorController extends Controller
                     ]);
                 }
             } else {
-                $errors['gemini'] = 'Gemini AI is not configured (missing GEMINI_API_KEY)';
+                $errors['gemini'] = 'Gemini AI is not configured (missing GEMINI_API_KEY). Please set it in the backend .env file and reload the application.';
             }
 
             // Call Together AI second
@@ -1467,7 +1484,7 @@ class AITutorController extends Controller
                     $t0 = microtime(true);
                     $togetherResponse = $this->tutorService->getResponseWithContext(
                         $request->question,
-                        $conversationHistory,
+                        $togetherConversationHistory,
                         $preferences,
                         $topic ? $topic->title : null,
                         $context
@@ -1481,7 +1498,7 @@ class AITutorController extends Controller
                     ]);
                 }
             } else {
-                $errors['together'] = 'Together AI is not configured (missing TOGETHER_API_KEY)';
+                $errors['together'] = 'Together AI is not configured (missing TOGETHER_API_KEY). Please set it in the backend .env file and reload the application.';
             }
 
             // Save both responses

@@ -14,9 +14,18 @@ class TutorService
 
     public function __construct()
     {
-        $this->apiKey = env('TOGETHER_API_KEY', '');
+        // Try multiple ways to get the API key to ensure it's loaded
+        $this->apiKey = env('TOGETHER_API_KEY', '') ?: config('services.together.api_key', '');
         $this->apiUrl = env('TOGETHER_API_URL', 'https://api.together.xyz/v1');
         $this->model = 'mistralai/Mixtral-8x7B-Instruct-v0.1'; // Default model, can be changed
+        
+        // Log the API key status for debugging
+        Log::info('TutorService constructor - API key status', [
+            'apiKey_exists' => !empty($this->apiKey),
+            'apiKey_length' => strlen($this->apiKey),
+            'apiKey_prefix' => substr($this->apiKey, 0, 10) . '...',
+            'apiUrl' => $this->apiUrl
+        ]);
     }
 
     /**
@@ -25,24 +34,27 @@ class TutorService
     public function getResponse($question, $conversationHistory, $preferences, $topic = null)
     {
         try {
-            // Make sure API key is loaded before each request
+            // Make sure API key is loaded before each request - try multiple sources
             if (empty($this->apiKey)) {
-                $this->apiKey = config('services.together.api_key', env('TOGETHER_API_KEY', ''));
+                $this->apiKey = env('TOGETHER_API_KEY', '') ?: config('services.together.api_key', '');
                 Log::info('TutorService::getResponse - Refreshing API key from config', [
-                    'apiKey_exists' => !empty($this->apiKey)
+                    'apiKey_exists' => !empty($this->apiKey),
+                    'apiKey_length' => strlen($this->apiKey),
+                    'apiKey_prefix' => substr($this->apiKey, 0, 10) . '...'
                 ]);
             }
 
             Log::info('TutorService::getResponse - Starting request processing', [
                 'apiKey_exists' => !empty($this->apiKey),
+                'apiKey_length' => strlen($this->apiKey),
                 'model' => $this->model,
                 'topic' => $topic
             ]);
 
             // Check if API key is missing
             if (empty($this->apiKey)) {
-                Log::error('Together API key is missing');
-                throw new \Exception('API key for Together AI is not configured');
+                Log::error('Together API key is missing - checked both env() and config()');
+                return "Together AI is not configured (missing TOGETHER_API_KEY). Please set it in the backend .env file and reload the application. For now, you can continue using Gemini AI which should be working.";
             }
 
             // Validate required parameters
@@ -240,6 +252,8 @@ class TutorService
 
             Log::info('TutorService::getResponseWithContext - Starting request processing', [
                 'apiKey_exists' => !empty($this->apiKey),
+                'apiKey_length' => strlen($this->apiKey),
+                'apiKey_prefix' => substr($this->apiKey, 0, 10) . '...',
                 'model' => $this->model,
                 'topic' => $topic,
                 'context_keys' => !empty($context) ? array_keys($context) : []
@@ -271,21 +285,28 @@ class TutorService
                 array_shift($formattedHistory);
             }
 
-            // Guardrail: trim conversation to avoid Together API 400 validation errors due to oversized payloads
+            // For Together AI, use a simplified conversation history to avoid validation errors
+            // Keep only the most recent 2-3 exchanges to ensure compatibility
             if (count($formattedHistory) > 0) {
-                $maxChars = 5000; // soft limit for combined history content
-                $trimmed = [];
-                $running = 0;
-                // include from the end (most recent first)
-                foreach (array_reverse($formattedHistory) as $msg) {
-                    $len = strlen($msg['content']);
-                    if ($running + $len > $maxChars) {
-                        break;
+                // Take only the last 4 messages (2 exchanges) to keep it simple
+                $formattedHistory = array_slice($formattedHistory, -4);
+                
+                // Ensure all messages are properly formatted
+                $formattedHistory = array_filter($formattedHistory, function($msg) {
+                    $content = trim($msg['content'] ?? '');
+                    if (empty($content)) {
+                        return false;
                     }
-                    $trimmed[] = $msg;
-                    $running += $len;
+                    
+                    // Clean content to prevent validation errors
+                    $msg['content'] = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $content);
+                    return !empty($msg['content']);
+                });
+                
+                // If we still have too many messages, take only the last 2
+                if (count($formattedHistory) > 2) {
+                    $formattedHistory = array_slice($formattedHistory, -2);
                 }
-                $formattedHistory = array_reverse($trimmed);
             }
             
             Log::info('TutorService::getResponseWithContext - Created system prompt and formatted history', [
@@ -510,7 +531,20 @@ class TutorService
                 } elseif (isset($message['sender']) && is_string($message['sender'])) {
                     // Format with 'sender' field - map consistently
                     $senderLower = strtolower($message['sender']);
-                    $role = ($senderLower === 'user') ? 'user' : 'assistant';
+                    
+                    // Map various sender values to proper roles
+                    if ($senderLower === 'user') {
+                        $role = 'user';
+                    } elseif (in_array($senderLower, ['assistant', 'ai', 'bot', 'gemini', 'together'])) {
+                        $role = 'assistant';
+                    } else {
+                        // Default to assistant for unknown sender types
+                        $role = 'assistant';
+                        Log::debug('TutorService::formatConversationHistory - Unknown sender type, defaulting to assistant', [
+                            'sender' => $message['sender'],
+                            'sender_lower' => $senderLower
+                        ]);
+                    }
                     
                     // Try various content field names in order of preference
                     if (isset($message['message']) && !empty($message['message'])) {
@@ -1055,7 +1089,7 @@ class TutorService
         }
         
         if (preg_match('/\b(?:how|what|why|when|where)\b/i', $question)) {
-            return "That's a good question{$topicPhrase}. I'm having trouble connecting to my knowledge services at the moment. Please try again in a few minutes.";
+            return "That's a good question{$topicPhrase}. I'm having trouble connecting to my knowledge services at the moment. Please try again in a few minutes. If you're asking about programming concepts, you can also check the lesson plans and practice sections for immediate help. You can also try using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\bcode\b/i', $question) || preg_match('/\bexample\b/i', $question)) {
@@ -1094,6 +1128,6 @@ class TutorService
         }
         
         // Default fallback response with more helpful context
-        return "I'm currently experiencing temporary connectivity issues with my knowledge services and can't provide a complete answer at this moment. This is typically resolved within a few minutes. Please try asking your question again shortly. In the meantime, you might try refreshing the page or checking out the available lesson plans and code practice sections.";
+        return "I'm currently experiencing temporary connectivity issues with my knowledge services and can't provide a complete answer at this moment. This is typically resolved within a few minutes. Please try asking your question again shortly. In the meantime, you might try refreshing the page or checking out the available lesson plans and code practice sections. If this issue persists, please check your internet connection or contact support. You can also try using Gemini AI which should be working properly.";
     }
 } 
