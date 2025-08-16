@@ -388,6 +388,394 @@ class AnalyticsController extends Controller
     }
 
     /**
+     * Get comprehensive AI preference analysis from key interaction points
+     * Focuses on the three main areas where users make AI preference choices
+     */
+    public function getAIPreferenceAnalysis(Request $request)
+    {
+        $userId = Auth::id();
+        $window = $request->get('window', '30d');
+        $topicId = $request->get('topic_id');
+        $difficulty = $request->get('difficulty');
+
+        // Window start
+        $now = Carbon::now();
+        $start = match (true) {
+            str_ends_with($window, 'd') => $now->copy()->subDays((int) rtrim($window, 'd')),
+            str_ends_with($window, 'w') => $now->copy()->subWeeks((int) rtrim($window, 'w')),
+            default => $now->copy()->subDays(30),
+        };
+
+        // 1. Code Execution Analysis (Solo Room)
+        $codeExecutionData = $this->analyzeCodeExecutionPreferences($userId, $start, $topicId);
+
+        // 2. Practice Problem Analysis
+        $practiceData = $this->analyzePracticePreferences($userId, $start, $topicId, $difficulty);
+
+        // 3. Quiz Analysis
+        $quizData = $this->analyzeQuizPreferences($userId, $start, $topicId, $difficulty);
+
+        // 4. Overall Preference Summary
+        $overallSummary = $this->calculateOverallPreferenceSummary($codeExecutionData, $practiceData, $quizData);
+
+        // 5. Performance Correlation Analysis
+        $performanceCorrelation = $this->analyzePerformanceCorrelation($userId, $start, $topicId);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'window' => $window,
+                'filters' => [
+                    'topic_id' => $topicId,
+                    'difficulty' => $difficulty,
+                ],
+                'code_execution_analysis' => $codeExecutionData,
+                'practice_analysis' => $practiceData,
+                'quiz_analysis' => $quizData,
+                'overall_summary' => $overallSummary,
+                'performance_correlation' => $performanceCorrelation,
+            ]
+        ]);
+    }
+
+    /**
+     * Analyze AI preferences from code execution in solo room
+     */
+    private function analyzeCodeExecutionPreferences($userId, $startDate, $topicId = null)
+    {
+        // Get preference logs for code execution
+        $preferenceLogs = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'code_execution')
+            ->where('created_at', '>=', $startDate)
+            ->when($topicId, fn($q) => $q->where('topic_id', $topicId))
+            ->get();
+
+        $totalChoices = $preferenceLogs->count();
+        
+        // Get code execution attempts with attribution for performance metrics
+        $codeExecutions = \App\Models\PracticeAttempt::where('user_id', $userId)
+            ->where('created_at', '>=', $startDate)
+            ->whereNotNull('attribution_model')
+            ->when($topicId, fn($q) => $q->whereHas('problem.category', fn($sq) => $sq->where('topic_id', $topicId)))
+            ->get();
+
+        $totalExecutions = $codeExecutions->count();
+        $successfulExecutions = $codeExecutions->where('is_correct', true)->count();
+        $successRate = $totalExecutions > 0 ? round(($successfulExecutions / $totalExecutions) * 100, 2) : 0;
+
+        // Analyze preferences by success rate
+        $preferencesBySuccess = [];
+        foreach (['gemini', 'together'] as $model) {
+            $modelExecutions = $codeExecutions->where('attribution_model', $model);
+            $modelTotal = $modelExecutions->count();
+            $modelSuccess = $modelExecutions->where('is_correct', true)->count();
+            
+            $preferencesBySuccess[$model] = [
+                'total_attempts' => $modelTotal,
+                'successful_attempts' => $modelSuccess,
+                'success_rate' => $modelTotal > 0 ? round(($modelSuccess / $modelTotal) * 100, 2) : 0,
+            ];
+        }
+
+        // Get user choice preferences from preference logs
+        $choices = $preferenceLogs->pluck('chosen_ai');
+
+        return [
+            'total_code_executions' => $totalExecutions,
+            'overall_success_rate' => $successRate,
+            'preferences_by_success' => $preferencesBySuccess,
+            'user_choice_breakdown' => [
+                'total_choices' => $totalChoices,
+                'gemini_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2) : 0,
+                'together_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'together')->count() / $totalChoices) * 100, 2) : 0,
+                'both_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'both')->count() / $totalChoices) * 100, 2) : 0,
+                'neither_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'neither')->count() / $totalChoices) * 100, 2) : 0,
+            ],
+            'recent_executions' => $codeExecutions->take(10)->map(function($execution) {
+                return [
+                    'id' => $execution->id,
+                    'created_at' => $execution->created_at,
+                    'model' => $execution->attribution_model,
+                    'success' => $execution->is_correct,
+                    'execution_time_ms' => $execution->execution_time_ms,
+                    'compiler_errors' => $execution->compiler_errors,
+                    'runtime_errors' => $execution->runtime_errors,
+                ];
+            }),
+        ];
+    }
+
+    /**
+     * Analyze AI preferences from practice problem completion
+     */
+    private function analyzePracticePreferences($userId, $startDate, $topicId = null, $difficulty = null)
+    {
+        // Get preference logs for practice
+        $preferenceLogs = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'practice')
+            ->where('created_at', '>=', $startDate)
+            ->when($topicId, fn($q) => $q->where('topic_id', $topicId))
+            ->when($difficulty, fn($q) => $q->where('difficulty_level', $difficulty))
+            ->get();
+
+        $totalChoices = $preferenceLogs->count();
+        
+        // Get practice attempts with attribution
+        $practiceAttempts = \App\Models\PracticeAttempt::where('user_id', $userId)
+            ->where('created_at', '>=', $startDate)
+            ->whereNotNull('attribution_model')
+            ->when($topicId, fn($q) => $q->whereHas('problem.category', fn($sq) => $sq->where('topic_id', $topicId)))
+            ->when($difficulty, fn($q) => $q->whereHas('problem', fn($sq) => $sq->where('difficulty_level', $difficulty)))
+            ->get();
+
+        $totalAttempts = $practiceAttempts->count();
+        $successfulAttempts = $practiceAttempts->where('is_correct', true)->count();
+        $overallSuccessRate = $totalAttempts > 0 ? round(($successfulAttempts / $totalAttempts) * 100, 2) : 0;
+
+        // Analyze by model
+        $modelAnalysis = [];
+        foreach (['gemini', 'together'] as $model) {
+            $modelAttempts = $practiceAttempts->where('attribution_model', $model);
+            $modelTotal = $modelAttempts->count();
+            $modelSuccess = $modelAttempts->where('is_correct', true)->count();
+            
+            $modelAnalysis[$model] = [
+                'total_attempts' => $modelTotal,
+                'successful_attempts' => $modelSuccess,
+                'success_rate' => $modelTotal > 0 ? round(($modelSuccess / $modelTotal) * 100, 2) : 0,
+                'avg_execution_time_ms' => $modelTotal > 0 ? round($modelAttempts->avg('execution_time_ms'), 2) : 0,
+                'avg_attempts_per_problem' => $modelTotal > 0 ? round($modelAttempts->groupBy('problem_id')->avg(fn($group) => $group->count()), 2) : 0,
+            ];
+        }
+
+        // Get user choice preferences from preference logs
+        $choices = $preferenceLogs->pluck('chosen_ai');
+
+        return [
+            'total_practice_attempts' => $totalAttempts,
+            'overall_success_rate' => $overallSuccessRate,
+            'model_performance' => $modelAnalysis,
+            'user_choice_breakdown' => [
+                'total_choices' => $totalChoices,
+                'gemini_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2) : 0,
+                'together_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'together')->count() / $totalChoices) * 100, 2) : 0,
+                'both_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'both')->count() / $totalChoices) * 100, 2) : 0,
+                'neither_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'neither')->count() / $totalChoices) * 100, 2) : 0,
+            ],
+            'difficulty_breakdown' => $practiceAttempts->groupBy('problem.difficulty_level')->map(function($attempts, $difficulty) {
+                $total = $attempts->count();
+                $success = $attempts->where('is_correct', true)->count();
+                return [
+                    'total_attempts' => $total,
+                    'success_rate' => $total > 0 ? round(($success / $total) * 100, 2) : 0,
+                ];
+            }),
+        ];
+    }
+
+    /**
+     * Analyze AI preferences from quiz completion
+     */
+    private function analyzeQuizPreferences($userId, $startDate, $topicId = null, $difficulty = null)
+    {
+        // Get preference logs for quiz
+        $preferenceLogs = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'quiz')
+            ->where('created_at', '>=', $startDate)
+            ->when($topicId, fn($q) => $q->where('topic_id', $topicId))
+            ->when($difficulty, fn($q) => $q->where('difficulty_level', $difficulty))
+            ->get();
+
+        $totalChoices = $preferenceLogs->count();
+        
+        // Get quiz attempts with attribution
+        $quizAttempts = \App\Models\QuizAttempt::where('user_id', $userId)
+            ->where('created_at', '>=', $startDate)
+            ->whereNotNull('attribution_model')
+            ->when($topicId, fn($q) => $q->whereHas('quiz.module.lessonPlan', fn($sq) => $sq->where('topic_id', $topicId)))
+            ->when($difficulty, fn($q) => $q->whereHas('quiz', fn($sq) => $sq->where('difficulty', $difficulty)))
+            ->get();
+
+        $totalAttempts = $quizAttempts->count();
+        $passedAttempts = $quizAttempts->where('passed', true)->count();
+        $overallPassRate = $totalAttempts > 0 ? round(($passedAttempts / $totalAttempts) * 100, 2) : 0;
+
+        // Analyze by model
+        $modelAnalysis = [];
+        foreach (['gemini', 'together'] as $model) {
+            $modelAttempts = $quizAttempts->where('attribution_model', $model);
+            $modelTotal = $modelAttempts->count();
+            $modelPassed = $modelAttempts->where('passed', true)->count();
+            
+            $modelAnalysis[$model] = [
+                'total_attempts' => $modelTotal,
+                'passed_attempts' => $modelPassed,
+                'pass_rate' => $modelTotal > 0 ? round(($modelPassed / $modelTotal) * 100, 2) : 0,
+                'avg_score' => $modelTotal > 0 ? round($modelAttempts->avg('percentage'), 2) : 0,
+                'avg_time_spent_seconds' => $modelTotal > 0 ? round($modelAttempts->avg('time_spent_seconds'), 2) : 0,
+            ];
+        }
+
+        // Get user choice preferences from preference logs
+        $preferenceLogs = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'quiz')
+            ->where('created_at', '>=', $startDate)
+            ->when($topicId, fn($q) => $q->where('topic_id', $topicId))
+            ->when($difficulty, fn($q) => $q->where('difficulty_level', $difficulty))
+            ->get();
+
+        $choices = $preferenceLogs->pluck('chosen_ai');
+        $totalChoices = $choices->count();
+
+        return [
+            'total_quiz_attempts' => $totalAttempts,
+            'overall_pass_rate' => $overallPassRate,
+            'model_performance' => $modelAnalysis,
+            'user_choice_breakdown' => [
+                'total_choices' => $totalChoices,
+                'gemini_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2) : 0,
+                'together_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'together')->count() / $totalChoices) * 100, 2) : 0,
+                'both_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'both')->count() / $totalChoices) * 100, 2) : 0,
+                'neither_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'neither')->count() / $totalChoices) * 100, 2) : 0,
+            ],
+            'difficulty_breakdown' => $quizAttempts->groupBy('quiz.difficulty')->map(function($attempts, $difficulty) {
+                $total = $attempts->count();
+                $passed = $attempts->where('passed', true)->count();
+                return [
+                    'total_attempts' => $total,
+                    'pass_rate' => $total > 0 ? round(($passed / $total) * 100, 2) : 0,
+                    'avg_score' => $total > 0 ? round($attempts->avg('percentage'), 2) : 0,
+                ];
+            }),
+        ];
+    }
+
+    /**
+     * Calculate overall preference summary across all interaction types
+     */
+    private function calculateOverallPreferenceSummary($codeData, $practiceData, $quizData)
+    {
+        $allChoices = [];
+        
+        // Collect all user choices
+        if ($codeData['user_choice_breakdown']['total_choices'] > 0) {
+            $allChoices['code_execution'] = $codeData['user_choice_breakdown'];
+        }
+        if ($practiceData['user_choice_breakdown']['total_choices'] > 0) {
+            $allChoices['practice'] = $practiceData['user_choice_breakdown'];
+        }
+        if ($quizData['user_choice_breakdown']['total_choices'] > 0) {
+            $allChoices['quiz'] = $quizData['user_choice_breakdown'];
+        }
+
+        if (empty($allChoices)) {
+            return [
+                'total_interactions' => 0,
+                'overall_preferences' => [
+                    'gemini' => 0,
+                    'together' => 0,
+                    'both' => 0,
+                    'neither' => 0,
+                ],
+                'preferences_by_interaction_type' => [],
+            ];
+        }
+
+        // Calculate weighted overall preferences
+        $totalInteractions = array_sum(array_column($allChoices, 'total_choices'));
+        $overallPreferences = [
+            'gemini' => 0,
+            'together' => 0,
+            'both' => 0,
+            'neither' => 0,
+        ];
+
+        foreach ($allChoices as $type => $data) {
+            $weight = $data['total_choices'] / $totalInteractions;
+            $overallPreferences['gemini'] += ($data['gemini_preference_rate'] * $weight);
+            $overallPreferences['together'] += ($data['together_preference_rate'] * $weight);
+            $overallPreferences['both'] += ($data['both_preference_rate'] * $weight);
+            $overallPreferences['neither'] += ($data['neither_preference_rate'] * $weight);
+        }
+
+        return [
+            'total_interactions' => $totalInteractions,
+            'overall_preferences' => array_map('round', $overallPreferences, array_fill(0, 4, 2)),
+            'preferences_by_interaction_type' => $allChoices,
+        ];
+    }
+
+    /**
+     * Analyze correlation between AI preference and performance
+     */
+    private function analyzePerformanceCorrelation($userId, $startDate, $topicId = null)
+    {
+        // Get all attempts with attribution and user choices
+        $practiceAttempts = \App\Models\PracticeAttempt::where('user_id', $userId)
+            ->where('created_at', '>=', $startDate)
+            ->whereNotNull('attribution_model')
+            ->when($topicId, fn($q) => $q->whereHas('problem.category', fn($sq) => $sq->where('topic_id', $topicId)))
+            ->get();
+
+        $quizAttempts = \App\Models\QuizAttempt::where('user_id', $userId)
+            ->where('created_at', '>=', $startDate)
+            ->whereNotNull('attribution_model')
+            ->when($topicId, fn($q) => $q->whereHas('quiz.module.lessonPlan', fn($sq) => $sq->where('topic_id', $topicId)))
+            ->get();
+
+        // Analyze performance by preference
+        $preferencePerformance = [];
+        foreach (['gemini', 'together', 'both', 'neither'] as $preference) {
+            $preferencePerformance[$preference] = [
+                'practice_success_rate' => 0,
+                'quiz_pass_rate' => 0,
+                'avg_quiz_score' => 0,
+                'total_attempts' => 0,
+            ];
+        }
+
+        // Calculate performance metrics for each preference
+        $sessions = \App\Models\SplitScreenSession::where('user_id', $userId)
+            ->where('started_at', '>=', $startDate)
+            ->whereNotNull('user_choice')
+            ->when($topicId, fn($q) => $q->where('topic_id', $topicId))
+            ->get();
+
+        foreach ($sessions as $session) {
+            $preference = $session->user_choice;
+            if (!isset($preferencePerformance[$preference])) continue;
+
+            // Get attempts within this session's timeframe
+            $sessionStart = $session->started_at;
+            $sessionEnd = $session->ended_at ?? now();
+
+            $sessionPracticeAttempts = $practiceAttempts->filter(function($attempt) use ($sessionStart, $sessionEnd) {
+                return $attempt->created_at >= $sessionStart && $attempt->created_at <= $sessionEnd;
+            });
+
+            $sessionQuizAttempts = $quizAttempts->filter(function($attempt) use ($sessionStart, $sessionEnd) {
+                return $attempt->created_at >= $sessionStart && $attempt->created_at <= $sessionEnd;
+            });
+
+            $preferencePerformance[$preference]['total_attempts'] += $sessionPracticeAttempts->count() + $sessionQuizAttempts->count();
+            
+            if ($sessionPracticeAttempts->count() > 0) {
+                $successRate = ($sessionPracticeAttempts->where('is_correct', true)->count() / $sessionPracticeAttempts->count()) * 100;
+                $preferencePerformance[$preference]['practice_success_rate'] = round($successRate, 2);
+            }
+
+            if ($sessionQuizAttempts->count() > 0) {
+                $passRate = ($sessionQuizAttempts->where('passed', true)->count() / $sessionQuizAttempts->count()) * 100;
+                $avgScore = $sessionQuizAttempts->avg('percentage');
+                $preferencePerformance[$preference]['quiz_pass_rate'] = round($passRate, 2);
+                $preferencePerformance[$preference]['avg_quiz_score'] = round($avgScore, 2);
+            }
+        }
+
+        return $preferencePerformance;
+    }
+
+    /**
      * Get enhanced analytics for split-screen sessions
      */
     public function getSplitScreenAnalytics(Request $request)

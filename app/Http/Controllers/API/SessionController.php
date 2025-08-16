@@ -108,13 +108,15 @@ class SessionController extends Controller
     }
 
     /**
-     * Record user choice after quiz/practice
+     * Record user choice after quiz/practice/code execution
      */
     public function recordChoice(Request $request, $sessionId)
     {
         $validator = Validator::make($request->all(), [
             'choice' => 'required|in:gemini,together,both,neither',
             'reason' => 'nullable|string|max:500',
+            'activity_type' => 'nullable|in:quiz,practice,code_execution',
+            'performance_metrics' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -137,7 +139,43 @@ class SessionController extends Controller
                 ], 404);
             }
 
+            // Record in session (existing functionality)
             $session->recordUserChoice($request->choice, $request->reason);
+
+            // Determine activity type if not provided
+            $activityType = $request->activity_type;
+            if (!$activityType) {
+                if ($session->quiz_triggered) {
+                    $activityType = 'quiz';
+                } elseif ($session->practice_triggered) {
+                    $activityType = 'practice';
+                } else {
+                    $activityType = 'code_execution'; // Default for solo room
+                }
+            }
+
+            // Get performance metrics from recent attempts
+            $performanceMetrics = $this->getPerformanceMetrics($userId, $activityType, $session->topic_id, $sessionId);
+
+            // Store in AIPreferenceLog table
+            $preferenceLog = \App\Models\AIPreferenceLog::create([
+                'user_id' => $userId,
+                'session_id' => $sessionId,
+                'topic_id' => $session->topic_id,
+                'interaction_type' => $activityType,
+                'chosen_ai' => $request->choice,
+                'choice_reason' => $request->reason,
+                'performance_score' => $performanceMetrics['performance_score'] ?? null,
+                'success_rate' => $performanceMetrics['success_rate'] ?? null,
+                'time_spent_seconds' => $performanceMetrics['time_spent_seconds'] ?? null,
+                'attempt_count' => $performanceMetrics['attempt_count'] ?? null,
+                'difficulty_level' => $session->topic->difficulty_level ?? null,
+                'context_data' => $performanceMetrics['context_data'] ?? null,
+                'attribution_chat_message_id' => $performanceMetrics['attribution_chat_message_id'] ?? null,
+                'attribution_model' => $performanceMetrics['attribution_model'] ?? null,
+                'attribution_confidence' => $performanceMetrics['attribution_confidence'] ?? null,
+                'attribution_delay_sec' => $performanceMetrics['attribution_delay_sec'] ?? null,
+            ]);
 
             return response()->json([
                 'status' => 'success',
@@ -145,6 +183,9 @@ class SessionController extends Controller
                     'session_id' => $session->id,
                     'user_choice' => $session->user_choice,
                     'choice_reason' => $session->choice_reason,
+                    'preference_log_id' => $preferenceLog->id,
+                    'activity_type' => $activityType,
+                    'performance_metrics' => $performanceMetrics,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -155,6 +196,101 @@ class SessionController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Get performance metrics for the current activity
+     */
+    private function getPerformanceMetrics($userId, $activityType, $topicId = null, $sessionId = null)
+    {
+        $metrics = [
+            'performance_score' => null,
+            'success_rate' => null,
+            'time_spent_seconds' => null,
+            'attempt_count' => null,
+            'context_data' => null,
+            'attribution_chat_message_id' => null,
+            'attribution_model' => null,
+            'attribution_confidence' => null,
+            'attribution_delay_sec' => null,
+        ];
+
+        try {
+            switch ($activityType) {
+                case 'quiz':
+                    // Get latest quiz attempt
+                    $quizAttempt = \App\Models\QuizAttempt::where('user_id', $userId)
+                        ->when($topicId, fn($q) => $q->whereHas('quiz.module.lessonPlan', fn($sq) => $sq->where('topic_id', $topicId)))
+                        ->latest()
+                        ->first();
+
+                    if ($quizAttempt) {
+                        $metrics['performance_score'] = $quizAttempt->percentage;
+                        $metrics['success_rate'] = $quizAttempt->passed ? 100 : 0;
+                        $metrics['time_spent_seconds'] = $quizAttempt->time_spent_seconds;
+                        $metrics['attempt_count'] = $quizAttempt->attempt_number;
+                        $metrics['attribution_model'] = $quizAttempt->attribution_model;
+                        $metrics['attribution_confidence'] = $quizAttempt->attribution_confidence;
+                        $metrics['attribution_delay_sec'] = $quizAttempt->attribution_delay_sec;
+                        $metrics['context_data'] = [
+                            'quiz_id' => $quizAttempt->quiz_id,
+                            'score' => $quizAttempt->score,
+                            'max_score' => $quizAttempt->max_possible_score,
+                            'passed' => $quizAttempt->passed,
+                        ];
+                    }
+                    break;
+
+                case 'practice':
+                    // Get latest practice attempt
+                    $practiceAttempt = \App\Models\PracticeAttempt::where('user_id', $userId)
+                        ->when($topicId, fn($q) => $q->whereHas('problem.category', fn($sq) => $sq->where('topic_id', $topicId)))
+                        ->latest()
+                        ->first();
+
+                    if ($practiceAttempt) {
+                        $metrics['performance_score'] = $practiceAttempt->points_earned ?? 0;
+                        $metrics['success_rate'] = $practiceAttempt->is_correct ? 100 : 0;
+                        $metrics['time_spent_seconds'] = $practiceAttempt->time_spent_seconds;
+                        $metrics['attempt_count'] = $practiceAttempt->attempt_number;
+                        $metrics['attribution_model'] = $practiceAttempt->attribution_model;
+                        $metrics['attribution_confidence'] = $practiceAttempt->attribution_confidence;
+                        $metrics['attribution_delay_sec'] = $practiceAttempt->attribution_delay_sec;
+                        $metrics['context_data'] = [
+                            'problem_id' => $practiceAttempt->problem_id,
+                            'is_correct' => $practiceAttempt->is_correct,
+                            'points_earned' => $practiceAttempt->points_earned,
+                            'complexity_score' => $practiceAttempt->complexity_score,
+                        ];
+                    }
+                    break;
+
+                case 'code_execution':
+                    // For code execution, we might not have specific metrics
+                    // but we can get recent chat messages for attribution
+                    $recentMessage = \App\Models\ChatMessage::where('user_id', $userId)
+                        ->where('session_id', $sessionId ?? null)
+                        ->whereNotNull('attribution_model')
+                        ->latest()
+                        ->first();
+
+                    if ($recentMessage) {
+                        $metrics['attribution_model'] = $recentMessage->attribution_model;
+                        $metrics['attribution_confidence'] = $recentMessage->attribution_confidence;
+                        $metrics['attribution_delay_sec'] = $recentMessage->attribution_delay_sec;
+                        $metrics['attribution_chat_message_id'] = $recentMessage->id;
+                        $metrics['context_data'] = [
+                            'message_id' => $recentMessage->id,
+                            'message_type' => $recentMessage->message_type,
+                        ];
+                    }
+                    break;
+            }
+        } catch (\Exception $e) {
+            Log::warning('Error getting performance metrics: ' . $e->getMessage());
+        }
+
+        return $metrics;
     }
 
     /**
