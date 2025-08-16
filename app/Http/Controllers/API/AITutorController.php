@@ -457,40 +457,46 @@ class AITutorController extends Controller
                 }
             }
 
-            // Get AI feedback on the code
+            // Get AI feedback on the code (optional - don't fail if AI is unavailable)
             $aiFeedback = '';
             if ($executionResult['success']) {
-                // Add relevant context for the AI feedback
-                $feedbackContext = [
-                    'stdout' => $executionResult['stdout'] ?? '',
-                    'stderr' => $executionResult['stderr'] ?? '',
-                    'topic' => $request->topic_id ? LearningTopic::find($request->topic_id)->title : null,
-                    'conversation_history' => $request->conversation_history ?? []
-                ];
-                
-                // Merge with exercise context if available
-                if (!empty($exerciseContext)) {
-                    $feedbackContext = array_merge($feedbackContext, $exerciseContext);
-                }
-                
-                // Determine which AI service to use based on preferences
-                $model = 'together';
-                if ($request->has('preferences') && is_array($request->preferences) && isset($request->preferences['model'])) {
-                    $model = strtolower($request->preferences['model']);
-                }
-                
-                if ($model === 'gemini') {
-                    $aiFeedback = $this->geminiService->evaluateCode(
-                        $request->code,
-                        $feedbackContext['stdout'] ?? '',
-                        $feedbackContext['stderr'] ?? '',
-                        $feedbackContext['topic'] ?? null
-                    );
-                } else {
-                    $aiFeedback = $this->tutorService->evaluateCodeWithContext(
-                        $request->code,
-                        $feedbackContext
-                    );
+                try {
+                    // Add relevant context for the AI feedback
+                    $feedbackContext = [
+                        'stdout' => $executionResult['stdout'] ?? '',
+                        'stderr' => $executionResult['stderr'] ?? '',
+                        'topic' => $request->topic_id ? LearningTopic::find($request->topic_id)->title : null,
+                        'conversation_history' => $request->conversation_history ?? []
+                    ];
+                    
+                    // Merge with exercise context if available
+                    if (!empty($exerciseContext)) {
+                        $feedbackContext = array_merge($feedbackContext, $exerciseContext);
+                    }
+                    
+                    // Determine which AI service to use based on preferences
+                    $model = 'together';
+                    if ($request->has('preferences') && is_array($request->preferences) && isset($request->preferences['model'])) {
+                        $model = strtolower($request->preferences['model']);
+                    }
+                    
+                    if ($model === 'gemini') {
+                        $aiFeedback = $this->geminiService->evaluateCode(
+                            $request->code,
+                            $feedbackContext['stdout'] ?? '',
+                            $feedbackContext['stderr'] ?? '',
+                            $feedbackContext['topic'] ?? null
+                        );
+                    } else {
+                        $aiFeedback = $this->tutorService->evaluateCodeWithContext(
+                            $request->code,
+                            $feedbackContext
+                        );
+                    }
+                } catch (\Exception $aiError) {
+                    // Log the AI error but don't fail the entire request
+                    Log::warning('AI feedback generation failed: ' . $aiError->getMessage());
+                    $aiFeedback = 'Code executed successfully! AI feedback is temporarily unavailable.';
                 }
             }
 
@@ -644,53 +650,59 @@ class AITutorController extends Controller
                 }
             }
 
-            // Get AI feedback on the code
+            // Get AI feedback on the code (optional - don't fail if AI is unavailable)
             $aiFeedback = '';
             if ($executionResult['success']) {
-                // Extract main file content for feedback
-                $mainFile = null;
-                foreach ($request->files as $file) {
-                    if (strpos($file['path'], $request->main_class) !== false) {
-                        $mainFile = $file;
-                        break;
+                try {
+                    // Extract main file content for feedback
+                    $mainFile = null;
+                    foreach ($request->files as $file) {
+                        if (strpos($file['path'], $request->main_class) !== false) {
+                            $mainFile = $file;
+                            break;
+                        }
                     }
-                }
-                
-                $mainCode = $mainFile ? $mainFile['content'] : '';
-                
-                // Add relevant context for the AI feedback
-                $feedbackContext = [
-                    'stdout' => $executionResult['stdout'] ?? '',
-                    'stderr' => $executionResult['stderr'] ?? '',
-                    'project_files' => $request->files, // Pass all files for context
-                    'main_class' => $request->main_class,
-                    'topic' => $request->topic_id ? LearningTopic::find($request->topic_id)->title : null,
-                    'conversation_history' => $request->conversation_history ?? []
-                ];
-                
-                // Merge with exercise context if available
-                if (!empty($exerciseContext)) {
-                    $feedbackContext = array_merge($feedbackContext, $exerciseContext);
-                }
-                
-                // Determine which AI service to use based on preferences
-                $model = 'together';
-                if ($request->has('preferences') && is_array($request->preferences) && isset($request->preferences['model'])) {
-                    $model = strtolower($request->preferences['model']);
-                }
-                
-                if ($model === 'gemini') {
-                    $aiFeedback = $this->geminiService->evaluateCode(
-                        $mainCode,
-                        $feedbackContext['stdout'] ?? '',
-                        $feedbackContext['stderr'] ?? '',
-                        $feedbackContext['topic'] ?? null
-                    );
-                } else {
-                    $aiFeedback = $this->tutorService->evaluateCodeWithContext(
-                        $mainCode, // Pass the main file content
-                        $feedbackContext
-                    );
+                    
+                    $mainCode = $mainFile ? $mainFile['content'] : '';
+                    
+                    // Add relevant context for the AI feedback
+                    $feedbackContext = [
+                        'stdout' => $executionResult['stdout'] ?? '',
+                        'stderr' => $executionResult['stderr'] ?? '',
+                        'project_files' => $request->files, // Pass all files for context
+                        'main_class' => $request->main_class,
+                        'topic' => $request->topic_id ? LearningTopic::find($request->topic_id)->title : null,
+                        'conversation_history' => $request->conversation_history ?? []
+                    ];
+                    
+                    // Merge with exercise context if available
+                    if (!empty($exerciseContext)) {
+                        $feedbackContext = array_merge($feedbackContext, $exerciseContext);
+                    }
+                    
+                    // Determine which AI service to use based on preferences
+                    $model = 'together';
+                    if ($request->has('preferences') && is_array($request->preferences) && isset($request->preferences['model'])) {
+                        $model = strtolower($request->preferences['model']);
+                    }
+                    
+                    if ($model === 'gemini') {
+                        $aiFeedback = $this->geminiService->evaluateCode(
+                            $mainCode,
+                            $feedbackContext['stdout'] ?? '',
+                            $feedbackContext['stderr'] ?? '',
+                            $feedbackContext['topic'] ?? null
+                        );
+                    } else {
+                        $aiFeedback = $this->tutorService->evaluateCodeWithContext(
+                            $mainCode, // Pass the main file content
+                            $feedbackContext
+                        );
+                    }
+                } catch (\Exception $aiError) {
+                    // Log the AI error but don't fail the entire request
+                    Log::warning('AI feedback generation failed: ' . $aiError->getMessage());
+                    $aiFeedback = 'Code executed successfully! AI feedback is temporarily unavailable.';
                 }
             }
 
