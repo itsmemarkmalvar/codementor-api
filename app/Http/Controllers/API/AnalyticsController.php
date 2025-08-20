@@ -210,14 +210,45 @@ class AnalyticsController extends Controller
             return $row;
         })->values();
 
-        // Pair within user
-        $users = $userModelAgg->pluck('user_id')->unique();
+
+
+        // Enhanced TICA metrics: Preference rates and clarification requests
+        $preferenceRates = $this->calculatePreferenceRates($userId, $start);
+        $clarificationMetrics = $this->calculateClarificationMetrics($userId, $start);
+        $splitScreenMetrics = $this->calculateSplitScreenMetrics($userId, $start);
+        
+        // NEW: Practice-based metrics for AI comparison
+        $practiceMetrics = $this->calculatePracticeBasedMetrics($userId, $start);
+        
+        // Transform practice metrics to match expected format
+        $practiceBasedUserModel = [];
+        foreach (['gemini', 'together'] as $model) {
+            $metrics = $practiceMetrics[$model];
+            if ($metrics['total_polls'] > 0) {
+                $practiceBasedUserModel[] = [
+                    'user_id' => $userId,
+                    'model' => $model,
+                    'n' => $metrics['total_polls'],
+                    'success1' => $metrics['next_run_success'],
+                    'ttf_min' => $metrics['time_to_fix'],
+                    'delta_errors' => $metrics['error_reduction'],
+                    'rating' => $metrics['rating'],
+                    'fallback_rate' => 0, // Not applicable for practice-based metrics
+                    'latency_ms' => null, // Not applicable for practice-based metrics
+                    'practice_success' => $metrics['practice_success'],
+                    'practice_attempts' => $metrics['practice_attempts']
+                ];
+            }
+        }
+        
+        // Update paired statistics calculation to use practice-based metrics
+        $users = collect($practiceBasedUserModel)->pluck('user_id')->unique();
         $paired = [];
         foreach ($users as $u) {
-            $g = $userModelAgg->first(function ($x) use ($u) {
+            $g = collect($practiceBasedUserModel)->first(function ($x) use ($u) {
                 return ($x['user_id'] === $u) && ($x['model'] === 'gemini');
             });
-            $t = $userModelAgg->first(function ($x) use ($u) {
+            $t = collect($practiceBasedUserModel)->first(function ($x) use ($u) {
                 return ($x['user_id'] === $u) && ($x['model'] === 'together');
             });
             if ($g && $t) {
@@ -226,11 +257,9 @@ class AnalyticsController extends Controller
                     'd_success1' => ($g['success1'] ?? 0) - ($t['success1'] ?? 0),
                     'd_ttf_min' => ($g['ttf_min'] ?? 0) - ($t['ttf_min'] ?? 0),
                     'd_delta_errors' => ($g['delta_errors'] ?? 0) - ($t['delta_errors'] ?? 0),
-                    'd_delta_quiz' => ($g['delta_quiz'] ?? 0) - ($t['delta_quiz'] ?? 0),
                     'd_rating' => ($g['rating'] ?? 0) - ($t['rating'] ?? 0),
-                    'd_delta_progress' => ($g['delta_progress'] ?? 0) - ($t['delta_progress'] ?? 0),
-                    'd_fallback_rate' => ($g['fallback_rate'] ?? 0) - ($t['fallback_rate'] ?? 0),
-                    'd_latency_ms' => ($g['latency_ms'] ?? 0) - ($t['latency_ms'] ?? 0),
+                    'd_practice_success' => ($g['practice_success'] ?? 0) - ($t['practice_success'] ?? 0),
+                    'd_practice_attempts' => ($g['practice_attempts'] ?? 0) - ($t['practice_attempts'] ?? 0),
                 ];
             }
         }
@@ -252,11 +281,9 @@ class AnalyticsController extends Controller
             'success1' => $mean($paired, 'd_success1'),
             'ttf_min' => $mean($paired, 'd_ttf_min'),
             'delta_errors' => $mean($paired, 'd_delta_errors'),
-            'delta_quiz' => $mean($paired, 'd_delta_quiz'),
             'rating' => $mean($paired, 'd_rating'),
-            'delta_progress' => $mean($paired, 'd_delta_progress'),
-            'fallback_rate' => $mean($paired, 'd_fallback_rate'),
-            'latency_ms' => $mean($paired, 'd_latency_ms'),
+            'practice_success' => $mean($paired, 'd_practice_success'),
+            'practice_attempts' => $mean($paired, 'd_practice_attempts'),
         ];
 
         // Suppress paired stats when n < nmin
@@ -276,11 +303,6 @@ class AnalyticsController extends Controller
             elseif ($succ['ci_high'] < 0) { $winner = 'together'; }
         }
 
-        // Enhanced TICA metrics: Preference rates and clarification requests
-        $preferenceRates = $this->calculatePreferenceRates($userId, $start);
-        $clarificationMetrics = $this->calculateClarificationMetrics($userId, $start);
-        $splitScreenMetrics = $this->calculateSplitScreenMetrics($userId, $start);
-
         return response()->json([
             'window' => $window,
             'k_runs' => $k,
@@ -294,7 +316,7 @@ class AnalyticsController extends Controller
                 'use_attribution_first' => $useAttributionFirst,
                 'quiz_pass_percent' => $quizPassThreshold,
             ],
-            'user_model' => $userModelAgg,
+            'user_model' => $practiceBasedUserModel, // Use practice-based metrics instead
             'paired' => $pairedStats,
             'winner' => $winner,
             'per_reply' => $perReply,
@@ -307,16 +329,36 @@ class AnalyticsController extends Controller
     }
 
     /**
-     * Calculate AI preference rates from split-screen sessions
+     * Calculate AI preference rates from split-screen sessions AND practice polls
      */
     private function calculatePreferenceRates($userId, $startDate)
     {
+        // Get split-screen session preferences
         $sessions = \App\Models\SplitScreenSession::where('user_id', $userId)
             ->where('started_at', '>=', $startDate)
             ->whereNotNull('user_choice')
             ->get();
 
-        $totalChoices = $sessions->count();
+        // Get practice poll preferences
+        $practicePolls = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'practice')
+            ->where('created_at', '>=', $startDate)
+            ->get();
+
+        // Get code execution poll preferences (only for ratings)
+        $codeExecutionPolls = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'code_execution')
+            ->where('created_at', '>=', $startDate)
+            ->get();
+
+        // Combine all choices
+        $sessionChoices = $sessions->pluck('user_choice');
+        $pollChoices = $practicePolls->pluck('chosen_ai');
+        $codeExecutionChoices = $codeExecutionPolls->pluck('chosen_ai');
+        
+        $allChoices = $sessionChoices->merge($pollChoices)->merge($codeExecutionChoices);
+        $totalChoices = $allChoices->count();
+
         if ($totalChoices === 0) {
             return [
                 'total_choices' => 0,
@@ -324,17 +366,24 @@ class AnalyticsController extends Controller
                 'together_preference_rate' => 0,
                 'both_preference_rate' => 0,
                 'neither_preference_rate' => 0,
+                'sources' => [
+                    'split_screen_sessions' => 0,
+                    'practice_polls' => 0
+                ]
             ];
         }
 
-        $choices = $sessions->pluck('user_choice');
-        
         return [
             'total_choices' => $totalChoices,
-            'gemini_preference_rate' => round(($choices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2),
-            'together_preference_rate' => round(($choices->filter(fn($c) => $c === 'together')->count() / $totalChoices) * 100, 2),
-            'both_preference_rate' => round(($choices->filter(fn($c) => $c === 'both')->count() / $totalChoices) * 100, 2),
-            'neither_preference_rate' => round(($choices->filter(fn($c) => $c === 'neither')->count() / $totalChoices) * 100, 2),
+            'gemini_preference_rate' => round(($allChoices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2),
+            'together_preference_rate' => round(($allChoices->filter(fn($c) => $c === 'together')->count() / $totalChoices) * 100, 2),
+            'both_preference_rate' => round(($allChoices->filter(fn($c) => $c === 'both')->count() / $totalChoices) * 100, 2),
+            'neither_preference_rate' => round(($allChoices->filter(fn($c) => $c === 'neither')->count() / $totalChoices) * 100, 2),
+            'sources' => [
+                'split_screen_sessions' => $sessionChoices->count(),
+                'practice_polls' => $pollChoices->count(),
+                'code_execution_polls' => $codeExecutionChoices->count()
+            ]
         ];
     }
 
@@ -385,6 +434,86 @@ class AnalyticsController extends Controller
             'practice_trigger_rate' => round(($sessions->where('practice_triggered', true)->count() / $totalSessions) * 100, 2),
             'engagement_threshold_rate' => round(($sessions->filter(fn($s) => $s->shouldTriggerEngagement())->count() / $totalSessions) * 100, 2),
         ];
+    }
+
+    /**
+     * Calculate practice-based metrics for AI comparison
+     * Based on user's AI preference polls and practice performance
+     */
+    private function calculatePracticeBasedMetrics($userId, $startDate)
+    {
+        // Get practice polls within the time window
+        $practicePolls = \App\Models\AIPreferenceLog::where('user_id', $userId)
+            ->where('interaction_type', 'practice')
+            ->where('created_at', '>=', $startDate)
+            ->get();
+
+        $metrics = [
+            'gemini' => [
+                'next_run_success' => 0,
+                'time_to_fix' => null,
+                'error_reduction' => 0,
+                'rating' => 0,
+                'practice_success' => 0,
+                'practice_attempts' => 0,
+                'total_polls' => 0,
+                'successful_polls' => 0
+            ],
+            'together' => [
+                'next_run_success' => 0,
+                'time_to_fix' => null,
+                'error_reduction' => 0,
+                'rating' => 0,
+                'practice_success' => 0,
+                'practice_attempts' => 0,
+                'total_polls' => 0,
+                'successful_polls' => 0
+            ]
+        ];
+
+        if ($practicePolls->count() === 0) {
+            return $metrics;
+        }
+
+        $totalPolls = $practicePolls->count();
+
+        // Calculate metrics for each AI
+        foreach (['gemini', 'together'] as $ai) {
+            $aiPolls = $practicePolls->where('chosen_ai', $ai);
+            $aiTotalPolls = $aiPolls->count();
+            
+            if ($aiTotalPolls === 0) {
+                continue;
+            }
+
+            // 1. Next run success (based on performance_score > 0)
+            $successfulPolls = $aiPolls->where('performance_score', '>', 0)->count();
+            $metrics[$ai]['next_run_success'] = $aiTotalPolls > 0 ? ($successfulPolls / $aiTotalPolls) : 0;
+            $metrics[$ai]['successful_polls'] = $successfulPolls;
+
+            // 2. Time to fix (average time_spent_seconds in minutes)
+            $avgTimeSpent = $aiPolls->avg('time_spent_seconds');
+            $metrics[$ai]['time_to_fix'] = $avgTimeSpent ? round($avgTimeSpent / 60, 1) : null;
+
+            // 3. Error reduction (based on attempt_count - lower is better)
+            $avgAttempts = $aiPolls->avg('attempt_count');
+            // Convert to error reduction score (inverse of attempts)
+            $metrics[$ai]['error_reduction'] = $avgAttempts ? max(0, 5 - $avgAttempts) : 0; // 5 attempts = 0 reduction, 1 attempt = 4 reduction
+
+            // 4. Rating (percentage of times user chose this AI)
+            $metrics[$ai]['rating'] = $totalPolls > 0 ? ($aiTotalPolls / $totalPolls) : 0;
+
+            // 5. Practice success (success_rate from polls)
+            $avgSuccessRate = $aiPolls->avg('success_rate');
+            $metrics[$ai]['practice_success'] = $avgSuccessRate ? ($avgSuccessRate / 100) : 0;
+
+            // 6. Practice attempts (total number of attempts for this AI)
+            $metrics[$ai]['practice_attempts'] = $aiTotalPolls;
+
+            $metrics[$ai]['total_polls'] = $aiTotalPolls;
+        }
+
+        return $metrics;
     }
 
     /**

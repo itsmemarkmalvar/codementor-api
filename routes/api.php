@@ -14,6 +14,7 @@ use App\Http\Controllers\API\QuizController;
 use App\Http\Controllers\API\PracticeController;
 use App\Http\Controllers\API\ProjectController;
 use App\Http\Controllers\API\AnalyticsController;
+use App\Http\Controllers\API\AIPreferenceLogController;
 use App\Http\Controllers\API\HealthController;
 use App\Http\Controllers\API\SessionController;
 use Illuminate\Support\Facades\Auth;
@@ -235,9 +236,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/projects/import', [ProjectController::class, 'import']);
 
     // Analytics
-    Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
-    Route::get('/analytics/ai-preferences', [AnalyticsController::class, 'getAIPreferenceAnalysis']);
-    Route::get('/analytics/split-screen', [AnalyticsController::class, 'getSplitScreenAnalytics']);
+Route::get('/analytics/models/compare', [AnalyticsController::class, 'compareModels']);
+Route::get('/analytics/ai-preferences', [AnalyticsController::class, 'getAIPreferenceAnalysis']);
+Route::get('/analytics/split-screen', [AnalyticsController::class, 'getSplitScreenAnalytics']);
+
+// AI Preference Logs routes
+Route::post('/ai-preference-logs', [AIPreferenceLogController::class, 'store']);
+Route::get('/ai-preference-logs', [AIPreferenceLogController::class, 'getUserPreferences']);
     
     // Split-screen session management
     Route::prefix('sessions')->group(function () {

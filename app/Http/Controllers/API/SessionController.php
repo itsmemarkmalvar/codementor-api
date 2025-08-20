@@ -165,12 +165,12 @@ class SessionController extends Controller
                 'interaction_type' => $activityType,
                 'chosen_ai' => $request->choice,
                 'choice_reason' => $request->reason,
-                'performance_score' => $performanceMetrics['performance_score'] ?? null,
-                'success_rate' => $performanceMetrics['success_rate'] ?? null,
-                'time_spent_seconds' => $performanceMetrics['time_spent_seconds'] ?? null,
-                'attempt_count' => $performanceMetrics['attempt_count'] ?? null,
-                'difficulty_level' => $session->topic->difficulty_level ?? null,
-                'context_data' => $performanceMetrics['context_data'] ?? null,
+                'performance_score' => $performanceMetrics['performance_score'] ?? 100,
+                'success_rate' => $performanceMetrics['success_rate'] ?? 100,
+                'time_spent_seconds' => $performanceMetrics['time_spent_seconds'] ?? 0,
+                'attempt_count' => $performanceMetrics['attempt_count'] ?? 1,
+                'difficulty_level' => $session->topic?->difficulty_level ?? 'medium',
+                'context_data' => $performanceMetrics['context_data'] ?? [],
                 'attribution_chat_message_id' => $performanceMetrics['attribution_chat_message_id'] ?? null,
                 'attribution_model' => $performanceMetrics['attribution_model'] ?? null,
                 'attribution_confidence' => $performanceMetrics['attribution_confidence'] ?? null,
@@ -190,6 +190,7 @@ class SessionController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Error recording user choice: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to record choice',
@@ -270,13 +271,17 @@ class SessionController extends Controller
                     // but we can get recent chat messages for attribution
                     $recentMessage = \App\Models\ChatMessage::where('user_id', $userId)
                         ->where('session_id', $sessionId ?? null)
-                        ->whereNotNull('attribution_model')
                         ->latest()
                         ->first();
 
                     if ($recentMessage) {
-                        $metrics['attribution_model'] = $recentMessage->attribution_model;
-                        $metrics['attribution_confidence'] = $recentMessage->attribution_confidence;
+                        // Only set attribution if the columns exist
+                        if (isset($recentMessage->attribution_model)) {
+                            $metrics['attribution_model'] = $recentMessage->attribution_model;
+                        }
+                        if (isset($recentMessage->attribution_confidence)) {
+                            $metrics['attribution_confidence'] = $recentMessage->attribution_confidence;
+                        }
                         $metrics['attribution_delay_sec'] = $recentMessage->attribution_delay_sec;
                         $metrics['attribution_chat_message_id'] = $recentMessage->id;
                         $metrics['context_data'] = [

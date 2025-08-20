@@ -216,12 +216,26 @@ class PracticeController extends Controller
      */
     public function submitSolution(Request $request, $id)
     {
+        // Add detailed logging for debugging
+        \Log::info('[Practice] Submit solution request', [
+            'problem_id' => $id,
+            'user_authenticated' => Auth::check(),
+            'user_id' => Auth::id(),
+            'request_headers' => $request->headers->all(),
+            'request_data' => $request->all()
+        ]);
+
         $validator = Validator::make($request->all(), [
             'code' => 'required|string',
-            'time_spent_seconds' => 'nullable|integer'
+            'time_spent_seconds' => 'nullable|integer',
+            'hints_used' => 'nullable|array',
+            'chat_message_id' => 'nullable|integer'
         ]);
 
         if ($validator->fails()) {
+            \Log::warning('[Practice] Validation failed', [
+                'errors' => $validator->errors()->toArray()
+            ]);
             return response()->json([
                 'status' => 'error',
                 'errors' => $validator->errors()
@@ -245,6 +259,9 @@ class PracticeController extends Controller
                 '',
                 $problem->test_cases
             );
+            
+            // Sanitize execution result to fix UTF-8 encoding issues
+            $executionResult = $this->sanitizeExecutionResult($executionResult);
             // Debug breadcrumbs for visibility when students see "No output"
             \Log::info('[Practice] Execution summary', [
                 'problem_id' => $id,
@@ -293,6 +310,7 @@ class PracticeController extends Controller
                 'is_correct' => $allTestsPassed,
                 'time_spent_seconds' => $request->time_spent_seconds,
                 'attempt_number' => $attemptNumber,
+                'hints_used' => $request->input('hints_used', []),
                 'compiler_errors' => $compilerErrors,
                 'runtime_errors' => $runtimeErrors,
                 'test_case_results' => $testResults,
@@ -325,7 +343,21 @@ class PracticeController extends Controller
                 \Log::warning('Attribution set failed (practice): ' . $e->getMessage());
             }
 
-            $attempt = PracticeAttempt::create($attemptData);
+            try {
+                $attempt = PracticeAttempt::create($attemptData);
+            } catch (\Exception $e) {
+                \Log::error('[Practice] Failed to create practice attempt', [
+                    'error' => $e->getMessage(),
+                    'attempt_data_keys' => array_keys($attemptData),
+                    'execution_result_keys' => isset($attemptData['execution_result']) ? array_keys($attemptData['execution_result']) : 'not_set'
+                ]);
+                
+                // Try to create without execution_result if it's causing issues
+                unset($attemptData['execution_result']);
+                $attempt = PracticeAttempt::create($attemptData);
+                
+                \Log::info('[Practice] Created practice attempt without execution_result due to encoding issues');
+            }
             
             // Calculate points using Code Execution Reward Formula with Complexity
             $complexity = \App\Services\Progress\ProgressService::calculateCodeComplexity($request->code ?? '');
@@ -446,6 +478,32 @@ class PracticeController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Sanitize execution result to fix UTF-8 encoding issues.
+     */
+    private function sanitizeExecutionResult($executionResult)
+    {
+        if (!is_array($executionResult)) {
+            return $executionResult;
+        }
+        
+        $sanitized = [];
+        foreach ($executionResult as $key => $value) {
+            if (is_string($value)) {
+                // Remove or replace invalid UTF-8 characters
+                $sanitized[$key] = mb_convert_encoding($value, 'UTF-8', 'UTF-8');
+                // Remove any remaining invalid characters
+                $sanitized[$key] = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $sanitized[$key]);
+            } elseif (is_array($value)) {
+                $sanitized[$key] = $this->sanitizeExecutionResult($value);
+            } else {
+                $sanitized[$key] = $value;
+            }
+        }
+        
+        return $sanitized;
     }
 
     /**

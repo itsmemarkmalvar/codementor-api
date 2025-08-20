@@ -24,6 +24,122 @@ class JavaExecutionService
         if (!File::exists($this->tempDir)) {
             File::makeDirectory($this->tempDir, 0755, true);
         }
+        
+        // Log Java availability for debugging
+        $this->logJavaAvailability();
+    }
+    
+    /**
+     * Log Java availability and configuration for debugging
+     */
+    protected function logJavaAvailability()
+    {
+        $javaPaths = [
+            'java' => $this->findJavaExecutable(),
+            'javac' => $this->findJavacExecutable(),
+        ];
+        
+        Log::info('Java execution service initialized', [
+            'java_found' => !empty($javaPaths['java']),
+            'javac_found' => !empty($javaPaths['javac']),
+            'java_path' => $javaPaths['java'],
+            'javac_path' => $javaPaths['javac'],
+            'temp_dir' => $this->tempDir,
+            'max_execution_time' => $this->maxExecutionTime,
+            'memory_limit' => $this->memoryLimit,
+        ]);
+    }
+    
+    /**
+     * Find Java executable path
+     */
+    protected function findJavaExecutable(): ?string
+    {
+        // Try common Java installation paths
+        $possiblePaths = [
+            'java', // If in PATH
+            'C:\Program Files\Java\jdk-*\bin\java.exe',
+            'C:\Program Files\Java\jre-*\bin\java.exe',
+            'C:\Program Files (x86)\Java\jdk-*\bin\java.exe',
+            'C:\Program Files (x86)\Java\jre-*\bin\java.exe',
+            'C:\eclipse\plugins\org.eclipse.justj.openjdk.hotspot.jre.full.win32.x86_64_*\bin\java.exe',
+            'C:\eclipse\plugins\org.eclipse.justj.openjdk.hotspot.jdk.full.win32.x86_64_*\bin\java.exe',
+            // Eclipse Temurin JDK paths
+            'C:\Program Files\Eclipse Adoptium\jdk-*\bin\java.exe',
+            'C:\Program Files\Eclipse Adoptium\jdk-17*\bin\java.exe',
+            'C:\Program Files\Eclipse Adoptium\jre-*\bin\java.exe',
+            // Microsoft OpenJDK paths
+            'C:\Program Files\Microsoft\jdk-*\bin\java.exe',
+            'C:\Program Files\Microsoft\jdk-17*\bin\java.exe',
+            // Oracle JDK paths
+            'C:\Program Files\Java\jdk1.8*\bin\java.exe',
+            'C:\Program Files\Java\jdk-11*\bin\java.exe',
+            'C:\Program Files\Java\jdk-17*\bin\java.exe',
+            'C:\Program Files\Java\jdk-21*\bin\java.exe',
+        ];
+        
+        foreach ($possiblePaths as $path) {
+            if ($path === 'java') {
+                // Check if java is in PATH
+                $output = [];
+                exec('java -version 2>&1', $output, $returnCode);
+                if ($returnCode === 0) {
+                    return 'java';
+                }
+            } else {
+                // Check for wildcard paths
+                $matches = glob($path);
+                if (!empty($matches)) {
+                    return $matches[0];
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Find Javac executable path
+     */
+    protected function findJavacExecutable(): ?string
+    {
+        // Try common Java installation paths
+        $possiblePaths = [
+            'javac', // If in PATH
+            'C:\Program Files\Java\jdk-*\bin\javac.exe',
+            'C:\Program Files (x86)\Java\jdk-*\bin\javac.exe',
+            'C:\eclipse\plugins\org.eclipse.justj.openjdk.hotspot.jdk.full.win32.x86_64_*\bin\javac.exe',
+            // Eclipse Temurin JDK paths
+            'C:\Program Files\Eclipse Adoptium\jdk-*\bin\javac.exe',
+            'C:\Program Files\Eclipse Adoptium\jdk-17*\bin\javac.exe',
+            // Microsoft OpenJDK paths
+            'C:\Program Files\Microsoft\jdk-*\bin\javac.exe',
+            'C:\Program Files\Microsoft\jdk-17*\bin\javac.exe',
+            // Oracle JDK paths
+            'C:\Program Files\Java\jdk1.8*\bin\javac.exe',
+            'C:\Program Files\Java\jdk-11*\bin\javac.exe',
+            'C:\Program Files\Java\jdk-17*\bin\javac.exe',
+            'C:\Program Files\Java\jdk-21*\bin\javac.exe',
+        ];
+        
+        foreach ($possiblePaths as $path) {
+            if ($path === 'javac') {
+                // Check if javac is in PATH
+                $output = [];
+                exec('javac -version 2>&1', $output, $returnCode);
+                if ($returnCode === 0) {
+                    return 'javac';
+                }
+            } else {
+                // Check for wildcard paths
+                $matches = glob($path);
+                if (!empty($matches)) {
+                    return $matches[0];
+                }
+            }
+        }
+        
+        return null;
     }
     
     /**
@@ -392,7 +508,20 @@ class JavaExecutionService
      */
     protected function compileJavaCode(string $filePath, string $outputDir): array
     {
-        $command = sprintf('cd %s && javac %s 2>&1', escapeshellarg($outputDir), escapeshellarg(basename($filePath)));
+        $javacPath = $this->findJavacExecutable();
+        
+        if (!$javacPath) {
+            return [
+                'success' => false,
+                'stderr' => 'Java compiler (javac) not found. Please install JDK or ensure it is in PATH.',
+            ];
+        }
+        
+        $command = sprintf('cd %s && %s %s 2>&1', 
+            escapeshellarg($outputDir), 
+            escapeshellarg($javacPath), 
+            escapeshellarg(basename($filePath))
+        );
         
         $output = [];
         $returnCode = 0;
@@ -416,6 +545,15 @@ class JavaExecutionService
      */
     protected function compileJavaProject(array $filePaths, string $outputDir): array
     {
+        $javacPath = $this->findJavacExecutable();
+        
+        if (!$javacPath) {
+            return [
+                'success' => false,
+                'stderr' => 'Java compiler (javac) not found. Please install JDK or ensure it is in PATH.',
+            ];
+        }
+        
         // Convert absolute paths to relative paths from the output directory
         $relativeFilePaths = [];
         foreach ($filePaths as $path) {
@@ -427,7 +565,11 @@ class JavaExecutionService
         $filesArg = implode(' ', array_map('escapeshellarg', $relativeFilePaths));
         
         // Include classpath as current directory
-        $command = sprintf('cd %s && javac -cp . %s 2>&1', escapeshellarg($outputDir), $filesArg);
+        $command = sprintf('cd %s && %s -cp . %s 2>&1', 
+            escapeshellarg($outputDir), 
+            escapeshellarg($javacPath), 
+            $filesArg
+        );
         
         $output = [];
         $returnCode = 0;
@@ -452,6 +594,17 @@ class JavaExecutionService
      */
     protected function runJavaCode(string $className, string $executionDir, ?string $inputFile): array
     {
+        $javaPath = $this->findJavaExecutable();
+        
+        if (!$javaPath) {
+            return [
+                'success' => false,
+                'stdout' => '',
+                'stderr' => 'Java runtime not found. Please install JRE or ensure it is in PATH.',
+                'executionTime' => 0,
+            ];
+        }
+        
         // Determine operating system
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         
@@ -460,17 +613,19 @@ class JavaExecutionService
             // Windows doesn't have timeout command like Linux/Unix
             // Use a different approach for Windows
             $command = sprintf(
-                'cd %s && java -Xmx%dM %s',
+                'cd %s && %s -Xmx%dM %s',
                 escapeshellarg($executionDir),
+                escapeshellarg($javaPath),
                 $this->memoryLimit,
                 escapeshellarg($className)
             );
         } else {
             // Unix/Linux command
             $command = sprintf(
-                'cd %s && timeout %d java -Xmx%dM %s',
+                'cd %s && timeout %d %s -Xmx%dM %s',
                 escapeshellarg($executionDir),
                 $this->maxExecutionTime,
+                escapeshellarg($javaPath),
                 $this->memoryLimit,
                 escapeshellarg($className)
             );
@@ -949,22 +1104,35 @@ class JavaExecutionService
      */
     protected function runJavaProject(string $mainClass, string $executionDir, ?string $inputFile): array
     {
+        $javaPath = $this->findJavaExecutable();
+        
+        if (!$javaPath) {
+            return [
+                'success' => false,
+                'stdout' => '',
+                'stderr' => 'Java runtime not found. Please install JRE or ensure it is in PATH.',
+                'executionTime' => 0,
+            ];
+        }
+        
         // Determine operating system
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         
         // Build the command with resource limits
         if ($isWindows) {
             $command = sprintf(
-                'cd %s && java -Xmx%dM -cp . %s',
+                'cd %s && %s -Xmx%dM -cp . %s',
                 escapeshellarg($executionDir),
+                escapeshellarg($javaPath),
                 $this->memoryLimit,
                 escapeshellarg($mainClass)
             );
         } else {
             $command = sprintf(
-                'cd %s && timeout %d java -Xmx%dM -cp . %s',
+                'cd %s && timeout %d %s -Xmx%dM -cp . %s',
                 escapeshellarg($executionDir),
                 $this->maxExecutionTime,
+                escapeshellarg($javaPath),
                 $this->memoryLimit,
                 escapeshellarg($mainClass)
             );
