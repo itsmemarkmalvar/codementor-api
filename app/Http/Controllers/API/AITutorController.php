@@ -16,6 +16,7 @@ use App\Models\LessonExercise;
 use App\Models\ModuleProgress;
 use App\Models\ExerciseAttempt;
 use App\Models\QuizAttempt;
+use App\Models\SplitScreenSession;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -1268,16 +1269,22 @@ class AITutorController extends Controller
      */
     public function splitScreenChat(Request $request)
     {
+        // Debug logging
+        \Log::info('splitScreenChat called with request data:', $request->all());
+        
         $validator = Validator::make($request->all(), [
             'question' => 'required|string',
             'conversation_history' => 'nullable|array',
+            'conversation_history.*.role' => 'nullable|string|in:user,assistant',
+            'conversation_history.*.content' => 'nullable|string',
             'topic_id' => 'nullable|exists:learning_topics,id',
             'module_id' => 'nullable|exists:lesson_modules,id',
-            'session_id' => 'nullable|exists:learning_sessions,id',
+            'session_id' => 'nullable|exists:split_screen_sessions,id',
             'preferences' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
+            \Log::error('splitScreenChat validation failed:', $validator->errors()->toArray());
             return response()->json([
                 'status' => 'error',
                 'errors' => $validator->errors()
@@ -1285,6 +1292,13 @@ class AITutorController extends Controller
         }
 
         try {
+            // Debug authentication
+            $userId = Auth::id();
+            \Log::info('splitScreenChat authentication check', [
+                'user_id' => $userId,
+                'authenticated' => Auth::check()
+            ]);
+            
             // Get the topic if provided
             $topic = null;
             if ($request->has('topic_id') && $request->topic_id) {
@@ -1318,7 +1332,7 @@ class AITutorController extends Controller
             // Get or create a session if not provided
             $session = null;
             if ($request->has('session_id') && $request->session_id) {
-                $session = LearningSession::find($request->session_id);
+                $session = SplitScreenSession::find($request->session_id);
                 if (!$session) {
                     return response()->json([
                         'status' => 'error',
@@ -1330,14 +1344,24 @@ class AITutorController extends Controller
                 $userId = Auth::id() ?? 1;
                 
                 try {
-                    $session = LearningSession::create([
+                    \Log::info('Creating new split-screen session', [
+                        'user_id' => $userId,
+                        'topic_id' => $topic->id
+                    ]);
+                    
+                    $session = SplitScreenSession::create([
                         'user_id' => $userId,
                         'topic_id' => $topic->id,
-                        'title' => 'Session on ' . $topic->title,
+                        'session_type' => 'comparison',
+                        'ai_models_used' => ['gemini', 'together'],
                         'started_at' => now(),
                     ]);
+                    
+                    \Log::info('Split-screen session created successfully', [
+                        'session_id' => $session->id
+                    ]);
                 } catch (\Exception $e) {
-                    Log::error('Failed to create new learning session', [
+                    Log::error('Failed to create new split-screen session', [
                         'error' => $e->getMessage(),
                         'user_id' => $userId,
                         'topic_id' => $topic->id
