@@ -357,16 +357,20 @@ class AITutorController extends Controller
      */
     public function executeCode(Request $request)
     {
+        // Debug logging
+        \Log::info('executeCode called with request data:', $request->all());
+        
         $validator = Validator::make($request->all(), [
             'code' => 'required|string',
             'input' => 'nullable|string',
-            'session_id' => 'nullable|exists:learning_sessions,id',
+            'session_id' => 'nullable|exists:split_screen_sessions,id',
             'topic_id' => 'nullable|exists:learning_topics,id',
             'module_id' => 'nullable|exists:lesson_modules,id',
             'exercise_id' => 'nullable|exists:lesson_exercises,id',
         ]);
 
         if ($validator->fails()) {
+            \Log::error('executeCode validation failed:', $validator->errors()->toArray());
             return response()->json([
                 'status' => 'error',
                 'errors' => $validator->errors()
