@@ -1081,53 +1081,53 @@ class TutorService
         
         // Basic response patterns based on question type
         if (preg_match('/\b(?:hi|hello|hey|greetings)\b/i', $question)) {
-            return "Hello! I'm your programming tutor. I'm currently experiencing connectivity issues with my knowledge services. Please try again in a few minutes.";
+            return "Hello! I'm your programming tutor. I'm currently experiencing temporary connectivity issues with Together AI services. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\bexplain\b/i', $question)) {
-            return "I'd be happy to explain that{$topicPhrase}. However, my knowledge services are temporarily unavailable. This is a temporary issue. Please try again in a few minutes.";
+            return "I'd be happy to explain that{$topicPhrase}. However, Together AI services are temporarily unavailable. This is a temporary issue. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\b(?:how|what|why|when|where)\b/i', $question)) {
-            return "That's a good question{$topicPhrase}. I'm having trouble connecting to my knowledge services at the moment. Please try again in a few minutes. If you're asking about programming concepts, you can also check the lesson plans and practice sections for immediate help. You can also try using Gemini AI which should be working properly.";
+            return "That's a good question{$topicPhrase}. I'm having trouble connecting to Together AI services at the moment. Please try again in a few minutes. If you're asking about programming concepts, you can also check the lesson plans and practice sections for immediate help. You can also try using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\bcode\b/i', $question) || preg_match('/\bexample\b/i', $question)) {
-            return "I'd love to provide a code example{$topicPhrase}, but I'm currently experiencing technical difficulties connecting to my knowledge base. Please try again in a few minutes.";
+            return "I'd love to provide a code example{$topicPhrase}, but I'm currently experiencing technical difficulties connecting to Together AI services. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\b(?:error|bug|fix|problem|issue)\b/i', $question)) {
-            return "I'd like to help troubleshoot that{$topicPhrase}, but I'm currently experiencing connectivity issues. Please try again shortly, or you might try describing the error in different terms when I'm back online.";
+            return "I'd like to help troubleshoot that{$topicPhrase}, but I'm currently experiencing connectivity issues with Together AI services. Please try again shortly, or you can continue using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\b(?:compare|versus|vs|difference)\b/i', $question)) {
-            return "I'd be happy to compare those concepts{$topicPhrase} once my knowledge services are back online. Please try again in a few minutes.";
+            return "I'd be happy to compare those concepts{$topicPhrase} once Together AI services are back online. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\b(?:create|make|build|implement)\b/i', $question)) {
-            return "I'd love to help you build that{$topicPhrase}, but I'm temporarily disconnected from my knowledge base. Please try again in a few minutes.";
+            return "I'd love to help you build that{$topicPhrase}, but I'm temporarily disconnected from Together AI services. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
         }
         
         if (preg_match('/\b(?:best practice|should I|recommend)\b/i', $question)) {
-            return "I'd be happy to recommend best practices{$topicPhrase} once my knowledge services are restored. Please try again shortly.";
+            return "I'd be happy to recommend best practices{$topicPhrase} once Together AI services are restored. Please try again shortly, or you can continue using Gemini AI which should be working properly.";
         }
         
         // More specific responses based on topic if provided
         if ($topic) {
             if (stripos($topic, 'java') !== false) {
-                return "I'd love to help with your Java question, but I'm experiencing connectivity issues with my knowledge services. Please try again in a few minutes.";
+                return "I'd love to help with your Java question, but I'm experiencing connectivity issues with Together AI services. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
             }
             
             if (stripos($topic, 'algorithm') !== false || stripos($topic, 'data structure') !== false) {
-                return "I'd be happy to discuss that algorithm or data structure once my knowledge services are back online. Please try again shortly.";
+                return "I'd be happy to discuss that algorithm or data structure once Together AI services are back online. Please try again shortly, or you can continue using Gemini AI which should be working properly.";
             }
             
             if (stripos($topic, 'object') !== false && stripos($topic, 'oriented') !== false) {
-                return "I'd love to explore that object-oriented programming concept with you once my knowledge services are restored. Please try again in a few minutes.";
+                return "I'd love to explore that object-oriented programming concept with you once Together AI services are restored. Please try again in a few minutes, or you can continue using Gemini AI which should be working properly.";
             }
         }
         
         // Default fallback response with more helpful context
-        return "I'm currently experiencing temporary connectivity issues with my knowledge services and can't provide a complete answer at this moment. This is typically resolved within a few minutes. Please try asking your question again shortly. In the meantime, you might try refreshing the page or checking out the available lesson plans and code practice sections. If this issue persists, please check your internet connection or contact support. You can also try using Gemini AI which should be working properly.";
+        return "I'm currently experiencing temporary connectivity issues with Together AI services and can't provide a complete answer at this moment. This is typically resolved within a few minutes. Please try asking your question again shortly. In the meantime, you might try refreshing the page or checking out the available lesson plans and code practice sections. If this issue persists, please check your internet connection or contact support. You can also try using Gemini AI which should be working properly.";
     }
 } 

@@ -254,5 +254,14 @@ Route::get('/ai-preference-logs', [AIPreferenceLogController::class, 'getUserPre
         Route::post('/{sessionId}/clarification', [SessionController::class, 'requestClarification']);
         Route::post('/{sessionId}/engagement', [SessionController::class, 'incrementEngagement']);
     });
+
+    // Preserved session management
+    Route::prefix('preserved-sessions')->group(function () {
+        Route::get('/active/{userId}', [AITutorController::class, 'getActivePreservedSession']);
+        Route::post('/reactivate/{sessionId}', [AITutorController::class, 'reactivatePreservedSession']);
+        Route::post('/deactivate/{sessionId}', [AITutorController::class, 'deactivatePreservedSession']);
+        Route::delete('/{sessionId}', [AITutorController::class, 'deletePreservedSession']);
+        Route::get('/user/{userId}/history', [AITutorController::class, 'getUserSessionHistory']);
+    });
 });
 

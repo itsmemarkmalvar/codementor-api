@@ -57,20 +57,20 @@ return new class extends Migration
         Schema::table('learning_topics', function (Blueprint $table) {
             if (!Schema::hasColumn('learning_topics', 'title')) { return; }
             // Add unique index if not exists
-            $sm = Schema::getConnection()->getDoctrineSchemaManager();
-            $indexes = array_map(fn($i) => $i->getName(), $sm->listTableIndexes('learning_topics'));
-            if (!in_array('learning_topics_title_unique', $indexes)) {
+            try {
                 $table->unique('title');
+            } catch (\Exception $e) {
+                // Index might already exist, ignore error
             }
         });
 
         Schema::table('lesson_plans', function (Blueprint $table) {
             if (!Schema::hasColumn('lesson_plans', 'title')) { return; }
             if (!Schema::hasColumn('lesson_plans', 'topic_id')) { return; }
-            $sm = Schema::getConnection()->getDoctrineSchemaManager();
-            $indexes = array_map(fn($i) => $i->getName(), $sm->listTableIndexes('lesson_plans'));
-            if (!in_array('lesson_plans_topic_id_title_unique', $indexes)) {
+            try {
                 $table->unique(['topic_id', 'title']);
+            } catch (\Exception $e) {
+                // Index might already exist, ignore error
             }
         });
     }

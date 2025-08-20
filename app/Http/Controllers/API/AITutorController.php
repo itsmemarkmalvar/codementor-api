@@ -17,6 +17,7 @@ use App\Models\ModuleProgress;
 use App\Models\ExerciseAttempt;
 use App\Models\QuizAttempt;
 use App\Models\SplitScreenSession;
+use App\Models\PreservedSession;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -363,7 +364,7 @@ class AITutorController extends Controller
         $validator = Validator::make($request->all(), [
             'code' => 'required|string',
             'input' => 'nullable|string',
-            'session_id' => 'nullable|exists:split_screen_sessions,id',
+            'session_id' => 'nullable|string',
             'topic_id' => 'nullable|exists:learning_topics,id',
             'module_id' => 'nullable|exists:lesson_modules,id',
             'exercise_id' => 'nullable|exists:lesson_exercises,id',
@@ -1283,7 +1284,7 @@ class AITutorController extends Controller
             'conversation_history.*.content' => 'nullable|string',
             'topic_id' => 'nullable|exists:learning_topics,id',
             'module_id' => 'nullable|exists:lesson_modules,id',
-            'session_id' => 'nullable|exists:split_screen_sessions,id',
+            'session_id' => 'nullable|string',
             'preferences' => 'nullable|array',
         ]);
 
@@ -1333,44 +1334,69 @@ class AITutorController extends Controller
                 }
             }
 
-            // Get or create a session if not provided
+            // Get or create a preserved session
             $session = null;
+            $userId = Auth::id() ?? 1;
+            
             if ($request->has('session_id') && $request->session_id) {
-                $session = SplitScreenSession::find($request->session_id);
-                if (!$session) {
+                // Try to find existing preserved session
+                $session = PreservedSession::where('session_identifier', $request->session_id)
+                    ->where('user_id', $userId)
+                    ->first();
+                
+                if ($session) {
+                    // Reactivate existing session
+                    $session->markAsActive();
+                    \Log::info('Reactivated existing preserved session', [
+                        'session_id' => $session->session_identifier,
+                        'user_id' => $userId
+                    ]);
+                } else {
                     return response()->json([
                         'status' => 'error',
                         'message' => 'Session not found with ID: ' . $request->session_id
                     ], 404);
                 }
             } else if ($topic) {
-                // Create a new session for this topic if none provided
-                $userId = Auth::id() ?? 1;
+                // Check for existing active session for this user and topic
+                $existingSession = PreservedSession::getMostRecentSession($userId, $topic->id);
                 
-                try {
-                    \Log::info('Creating new split-screen session', [
+                if ($existingSession) {
+                    // Use existing session
+                    $session = $existingSession;
+                    $session->markAsActive();
+                    \Log::info('Using existing preserved session', [
+                        'session_id' => $session->session_identifier,
                         'user_id' => $userId,
                         'topic_id' => $topic->id
                     ]);
-                    
-                    $session = SplitScreenSession::create([
-                        'user_id' => $userId,
-                        'topic_id' => $topic->id,
-                        'session_type' => 'comparison',
-                        'ai_models_used' => ['gemini', 'together'],
-                        'started_at' => now(),
-                    ]);
-                    
-                    \Log::info('Split-screen session created successfully', [
-                        'session_id' => $session->id
-                    ]);
-                } catch (\Exception $e) {
-                    Log::error('Failed to create new split-screen session', [
-                        'error' => $e->getMessage(),
-                        'user_id' => $userId,
-                        'topic_id' => $topic->id
-                    ]);
-                    // Continue without session if creation fails
+                } else {
+                    // Create new preserved session
+                    try {
+                        \Log::info('Creating new preserved session', [
+                            'user_id' => $userId,
+                            'topic_id' => $topic->id
+                        ]);
+                        
+                        $session = PreservedSession::createSession([
+                            'user_id' => $userId,
+                            'topic_id' => $topic->id,
+                            'lesson_id' => $module ? $module->id : null,
+                            'session_type' => 'comparison',
+                            'ai_models_used' => ['gemini', 'together']
+                        ]);
+                        
+                        \Log::info('Preserved session created successfully', [
+                            'session_id' => $session->session_identifier
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('Failed to create new preserved session', [
+                            'error' => $e->getMessage(),
+                            'user_id' => $userId,
+                            'topic_id' => $topic->id
+                        ]);
+                        // Continue without session if creation fails
+                    }
                 }
             }
 
@@ -1625,6 +1651,167 @@ class AITutorController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'An error occurred while processing your request.'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get active preserved session for a user.
+     */
+    public function getActivePreservedSession($userId)
+    {
+        try {
+            $session = PreservedSession::getMostRecentSession($userId);
+            
+            if (!$session) {
+                return response()->json([
+                    'status' => 'success',
+                    'data' => null
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $session
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting active preserved session', [
+                'error' => $e->getMessage(),
+                'user_id' => $userId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to get active session'
+            ], 500);
+        }
+    }
+
+    /**
+     * Reactivate a preserved session.
+     */
+    public function reactivatePreservedSession($sessionId)
+    {
+        try {
+            $session = PreservedSession::where('session_identifier', $sessionId)->first();
+            
+            if (!$session) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            $session->markAsActive();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $session
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error reactivating preserved session', [
+                'error' => $e->getMessage(),
+                'session_id' => $sessionId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to reactivate session'
+            ], 500);
+        }
+    }
+
+    /**
+     * Deactivate a preserved session.
+     */
+    public function deactivatePreservedSession($sessionId)
+    {
+        try {
+            $session = PreservedSession::where('session_identifier', $sessionId)->first();
+            
+            if (!$session) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            $session->markAsInactive();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $session
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deactivating preserved session', [
+                'error' => $e->getMessage(),
+                'session_id' => $sessionId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to deactivate session'
+            ], 500);
+        }
+    }
+
+    /**
+     * Delete a preserved session.
+     */
+    public function deletePreservedSession($sessionId)
+    {
+        try {
+            $session = PreservedSession::where('session_identifier', $sessionId)->first();
+            
+            if (!$session) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            $session->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Session deleted successfully'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deleting preserved session', [
+                'error' => $e->getMessage(),
+                'session_id' => $sessionId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to delete session'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get user session history.
+     */
+    public function getUserSessionHistory($userId)
+    {
+        try {
+            $sessions = PreservedSession::forUser($userId)
+                ->orderBy('last_activity', 'desc')
+                ->get();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $sessions
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting user session history', [
+                'error' => $e->getMessage(),
+                'user_id' => $userId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to get session history'
             ], 500);
         }
     }
