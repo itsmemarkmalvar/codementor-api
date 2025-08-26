@@ -258,9 +258,12 @@ Route::get('/ai-preference-logs', [AIPreferenceLogController::class, 'getUserPre
     // Preserved session management
     Route::prefix('preserved-sessions')->group(function () {
         Route::get('/active/{userId}', [AITutorController::class, 'getActivePreservedSession']);
-        Route::post('/reactivate/{sessionId}', [AITutorController::class, 'reactivatePreservedSession']);
-        Route::post('/deactivate/{sessionId}', [AITutorController::class, 'deactivatePreservedSession']);
-        Route::delete('/{sessionId}', [AITutorController::class, 'deletePreservedSession']);
+        Route::get('/active/{userId}/lesson/{lessonId}', [AITutorController::class, 'getActivePreservedSessionByLesson']);
+Route::post('/reactivate/{sessionId}', [AITutorController::class, 'reactivatePreservedSession']);
+Route::post('/deactivate/{sessionId}', [AITutorController::class, 'deactivatePreservedSession']);
+Route::delete('/{sessionId}', [AITutorController::class, 'deletePreservedSession']);
+        Route::put('/{sessionId}/conversation', [AITutorController::class, 'updateConversationHistory']);
+        Route::put('/{sessionId}/metadata', [AITutorController::class, 'updateSessionMetadata']);
         Route::get('/user/{userId}/history', [AITutorController::class, 'getUserSessionHistory']);
     });
 });

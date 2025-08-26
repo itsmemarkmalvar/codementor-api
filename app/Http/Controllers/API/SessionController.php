@@ -19,6 +19,7 @@ class SessionController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'topic_id' => 'nullable|exists:learning_topics,id',
+            'lesson_id' => 'nullable|exists:lesson_modules,id',
             'session_type' => 'required|in:comparison,single',
             'ai_models' => 'required|array',
             'ai_models.*' => 'in:gemini,together',
@@ -39,23 +40,24 @@ class SessionController extends Controller
                 ->whereNull('ended_at')
                 ->update(['ended_at' => now()]);
 
-            // Create new session
-            $session = SplitScreenSession::create([
+            // Create new preserved session (lesson-based)
+            $sessionData = [
                 'user_id' => $userId,
                 'topic_id' => $request->topic_id,
+                'lesson_id' => $request->lesson_id,
                 'session_type' => $request->session_type,
-                'ai_models_used' => $request->ai_models,
-                'started_at' => now(),
-                'engagement_score' => 0,
-            ]);
+                'ai_models_used' => $request->ai_models
+            ];
+            
+            $session = \App\Models\PreservedSession::createSession($sessionData);
 
             return response()->json([
                 'status' => 'success',
                 'data' => [
-                    'session_id' => $session->id,
+                    'session_id' => $session->session_identifier,
                     'session_type' => $session->session_type,
                     'ai_models' => $session->ai_models_used,
-                    'started_at' => $session->started_at,
+                    'started_at' => $session->created_at,
                 ]
             ]);
         } catch (\Exception $e) {

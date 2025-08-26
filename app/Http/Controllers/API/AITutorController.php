@@ -1670,6 +1670,51 @@ class AITutorController extends Controller
                 ]);
             }
 
+            // If session has no conversation history, try to load from chat_messages
+            if (empty($session->conversation_history)) {
+                $chatMessages = ChatMessage::where('user_id', $userId)
+                    ->orderBy('created_at', 'asc')
+                    ->get();
+                
+                if ($chatMessages->count() > 0) {
+                    $conversationHistory = [];
+                    foreach ($chatMessages as $message) {
+                        // Add user message
+                        $conversationHistory[] = [
+                            'id' => 'user_' . $message->id,
+                            'text' => $message->message,
+                            'sender' => 'user',
+                            'timestamp' => $message->created_at->toISOString(),
+                            '_model' => null
+                        ];
+                        
+                        // Add AI response
+                        $conversationHistory[] = [
+                            'id' => 'ai_' . $message->id,
+                            'text' => $message->response,
+                            'sender' => 'bot', // Default to bot for AI responses
+                            'timestamp' => $message->created_at->toISOString(),
+                            '_model' => $message->model ?? 'together' // Default to together if no model specified
+                        ];
+                    }
+                    
+                    // Update the session with conversation history
+                    $session->update([
+                        'conversation_history' => $conversationHistory,
+                        'last_activity' => now()
+                    ]);
+                    
+                    Log::info('Loaded conversation history from chat_messages', [
+                        'session_id' => $session->session_identifier,
+                        'user_id' => $userId,
+                        'message_count' => count($conversationHistory)
+                    ]);
+                }
+            }
+
+            // Update last activity when session is accessed
+            $session->updateActivity();
+
             return response()->json([
                 'status' => 'success',
                 'data' => $session
@@ -1703,6 +1748,14 @@ class AITutorController extends Controller
             }
 
             $session->markAsActive();
+
+            // Log session reactivation for analytics
+            Log::info('Preserved session reactivated', [
+                'session_id' => $sessionId,
+                'user_id' => $session->user_id,
+                'topic_id' => $session->topic_id,
+                'conversation_history_count' => count($session->conversation_history ?? [])
+            ]);
 
             return response()->json([
                 'status' => 'success',
@@ -1812,6 +1865,239 @@ class AITutorController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to get session history'
+            ], 500);
+        }
+    }
+
+    /**
+     * Update session metadata (engagement, topic, lesson, etc.) for a preserved session.
+     */
+    public function updateSessionMetadata(Request $request, $sessionId)
+    {
+        try {
+            // Log the incoming request for debugging
+            Log::info('updateSessionMetadata called', [
+                'session_id' => $sessionId,
+                'request_data' => $request->all()
+            ]);
+
+            $validator = Validator::make($request->all(), [
+                'engagement_data' => 'nullable|array',
+                'engagement_data.score' => 'nullable|numeric',
+                'engagement_data.is_threshold_reached' => 'nullable|boolean',
+                'engagement_data.events' => 'nullable|array',
+                'engagement_data.triggered_activity' => 'nullable|string|in:quiz,practice,null',
+                'engagement_data.assessment_sequence' => 'nullable|string|in:quiz,practice,null',
+                'topic_data' => 'nullable|array',
+                'topic_data.id' => 'nullable|integer',
+                'topic_data.title' => 'nullable|string',
+                'lesson_data' => 'nullable|array',
+                'lesson_data.id' => 'nullable|integer',
+                'lesson_data.title' => 'nullable|string',
+                'user_preferences' => 'nullable|array'
+            ]);
+
+            if ($validator->fails()) {
+                Log::error('Session metadata validation failed', [
+                    'errors' => $validator->errors()->toArray(),
+                    'session_id' => $sessionId
+                ]);
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $session = PreservedSession::where('session_identifier', $sessionId)->first();
+            
+            if (!$session) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            // Get current metadata
+            $currentMetadata = $session->session_metadata ?? [];
+            
+            // Update metadata with new data
+            $updatedMetadata = array_merge($currentMetadata, [
+                'engagement_data' => $request->input('engagement_data'),
+                'topic_data' => $request->input('topic_data'),
+                'lesson_data' => $request->input('lesson_data'),
+                'user_preferences' => $request->input('user_preferences'),
+                'last_updated' => now()->toISOString()
+            ]);
+
+            // Update session metadata
+            $session->update([
+                'session_metadata' => $updatedMetadata,
+                'last_activity' => now()
+            ]);
+
+            Log::info('Session metadata updated', [
+                'session_id' => $sessionId,
+                'engagement_score' => $request->input('engagement_data.score'),
+                'topic_id' => $request->input('topic_data.id'),
+                'lesson_id' => $request->input('lesson_data.id')
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $session
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error updating session metadata', [
+                'error' => $e->getMessage(),
+                'session_id' => $sessionId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update session metadata'
+            ], 500);
+        }
+    }
+
+    /**
+     * Update conversation history for a preserved session.
+     */
+    public function updateConversationHistory(Request $request, $sessionId)
+    {
+        try {
+            // Log the incoming request for debugging
+            Log::info('updateConversationHistory called', [
+                'session_id' => $sessionId,
+                'request_data' => $request->all(),
+                'conversation_history_count' => count($request->input('conversation_history', []))
+            ]);
+
+            $validator = Validator::make($request->all(), [
+                'conversation_history' => 'required|array',
+                'conversation_history.*.id' => 'nullable|string',
+                'conversation_history.*.text' => 'nullable|string',
+                'conversation_history.*.sender' => 'nullable|string|in:user,bot,ai',
+                'conversation_history.*.timestamp' => 'nullable',
+                'conversation_history.*._model' => 'nullable|string|in:gemini,together'
+            ]);
+
+            if ($validator->fails()) {
+                Log::error('Conversation history validation failed', [
+                    'errors' => $validator->errors()->toArray(),
+                    'session_id' => $sessionId
+                ]);
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $session = PreservedSession::where('session_identifier', $sessionId)->first();
+            
+            if (!$session) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            // Update conversation history
+            $session->update([
+                'conversation_history' => $request->conversation_history,
+                'last_activity' => now()
+            ]);
+
+            Log::info('Conversation history updated', [
+                'session_id' => $sessionId,
+                'message_count' => count($request->conversation_history)
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $session
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error updating conversation history', [
+                'error' => $e->getMessage(),
+                'session_id' => $sessionId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update conversation history'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get active preserved session for a specific user and lesson.
+     */
+    public function getActivePreservedSessionByLesson($userId, $lessonId)
+    {
+        try {
+            Log::info('getActivePreservedSessionByLesson called', [
+                'user_id' => $userId,
+                'lesson_id' => $lessonId
+            ]);
+
+            // Validate user ID
+            if (!is_numeric($userId)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid user ID'
+                ], 400);
+            }
+
+            // Validate lesson ID
+            if (!is_numeric($lessonId)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid lesson ID'
+                ], 400);
+            }
+
+            // Get active session for this user and lesson
+            $session = PreservedSession::where('user_id', $userId)
+                ->where('lesson_id', $lessonId)
+                ->where('is_active', true)
+                ->orderBy('last_activity', 'desc')
+                ->first();
+
+            if ($session) {
+                Log::info('Found active session for user and lesson', [
+                    'session_id' => $session->session_identifier,
+                    'user_id' => $userId,
+                    'lesson_id' => $lessonId
+                ]);
+
+                return response()->json([
+                    'status' => 'success',
+                    'data' => $session
+                ]);
+            } else {
+                Log::info('No active session found for user and lesson', [
+                    'user_id' => $userId,
+                    'lesson_id' => $lessonId
+                ]);
+
+                return response()->json([
+                    'status' => 'success',
+                    'data' => null,
+                    'message' => 'No active session found for this lesson'
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error getting active preserved session by lesson', [
+                'error' => $e->getMessage(),
+                'user_id' => $userId,
+                'lesson_id' => $lessonId
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to get active session'
             ], 500);
         }
     }
