@@ -15,11 +15,22 @@ use Illuminate\Support\Facades\DB;
 class AnalyticsController extends Controller
 {
      /**
-      * Compare Gemini vs Together on tutoring impact.
+      * TICA-E (Tutor Impact Comparative Algorithm - Extended)
+      * 
+      * Extends original TICA with poll-based user preference metrics.
+      * Combines causal analysis (original TICA) with preference correlation.
+      * 
+      * Key Extensions:
+      * - Poll-driven Success1 calculation
+      * - Preference-based rating system
+      * - Enhanced error reduction metrics
+      * - Multi-source attribution
+      * 
+      * Compare Gemini vs Together on tutoring impact using hybrid causal-preference analysis.
       * Params:
       *  - window (e.g., '30d')
-      *  - k_runs (int)
-      *  - lookahead_min (int)
+      *  - k_runs (int) - legacy parameter for backward compatibility
+      *  - lookahead_min (int) - legacy parameter for backward compatibility
       *  - topic_id (optional filter)
       *  - difficulty (optional filter: beginner|easy|medium|hard|expert)
       *  - nmin (int, minimum sample size to show stats)
@@ -304,6 +315,8 @@ class AnalyticsController extends Controller
         }
 
         return response()->json([
+            'algorithm' => 'TICA-E',
+            'algorithm_name' => 'Tutor Impact Comparative Algorithm - Extended',
             'window' => $window,
             'k_runs' => $k,
             'lookahead_min' => $lookahead,
@@ -437,7 +450,17 @@ class AnalyticsController extends Controller
     }
 
     /**
-     * Calculate practice-based metrics for AI comparison
+     * TICA-E: Calculate practice-based metrics for AI comparison
+     * 
+     * Implements the core TICA-E algorithm using poll-based user preference data.
+     * 
+     * Algorithm Components:
+     * - Success1: (SuccessfulPolls_m / TotalPolls_m) × 100
+     * - TTF_min: Average(TimeSpent_seconds) / 60
+     * - ΔErrors: max(0, 5 - Average(AttemptCount))
+     * - Rating: (PollChoices_m / TotalPolls) × 100
+     * - PracticeSuccess: Average(SuccessRate_m) / 100
+     * 
      * Based on user's AI preference polls and practice performance
      */
     private function calculatePracticeBasedMetrics($userId, $startDate)

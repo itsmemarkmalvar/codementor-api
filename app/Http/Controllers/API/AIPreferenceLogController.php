@@ -19,7 +19,8 @@ class AIPreferenceLogController extends Controller
     {
         try {
             $validated = $request->validate([
-                'practice_attempt_id' => 'required|integer|exists:practice_attempts,id',
+                'practice_attempt_id' => 'nullable|integer|exists:practice_attempts,id',
+                'session_id' => 'nullable|integer|exists:split_screen_sessions,id',
                 'chosen_ai' => 'required|string|in:gemini,together,both,neither',
                 'choice_reason' => 'nullable|string|max:500',
                 'interaction_type' => 'required|string|in:quiz,practice,code_execution',
@@ -40,30 +41,80 @@ class AIPreferenceLogController extends Controller
                 ], 401);
             }
 
-            // Verify the practice attempt belongs to the authenticated user
-            $practiceAttempt = PracticeAttempt::where('id', $validated['practice_attempt_id'])
-                ->where('user_id', $userId)
-                ->first();
+            // Initialize attribution data
+            $attributionData = [
+                'attribution_chat_message_id' => null,
+                'attribution_model' => null,
+                'attribution_confidence' => null,
+                'attribution_delay_sec' => null,
+            ];
 
-            if (!$practiceAttempt) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Practice attempt not found or access denied'
-                ], 404);
+            // Handle practice-based preference logs
+            if (isset($validated['practice_attempt_id']) && $validated['practice_attempt_id']) {
+                // Verify the practice attempt belongs to the authenticated user
+                $practiceAttempt = PracticeAttempt::where('id', $validated['practice_attempt_id'])
+                    ->where('user_id', $userId)
+                    ->first();
+
+                if (!$practiceAttempt) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Practice attempt not found or access denied'
+                    ], 404);
+                }
+
+                // Get attribution data from the practice attempt
+                // Convert ENUM attribution_confidence to decimal for AIPreferenceLog
+                $confidenceValue = match($practiceAttempt->attribution_confidence) {
+                    'explicit' => 0.95,
+                    'session' => 0.85,
+                    'temporal' => 0.75,
+                    default => 0.80,
+                };
+                
+                $attributionData = [
+                    'attribution_chat_message_id' => $practiceAttempt->attribution_chat_message_id,
+                    'attribution_model' => $practiceAttempt->attribution_model,
+                    'attribution_confidence' => $confidenceValue,
+                    'attribution_delay_sec' => $practiceAttempt->attribution_delay_sec,
+                ];
             }
 
-            // Get attribution data from the practice attempt
-            $attributionData = [
-                'attribution_chat_message_id' => $practiceAttempt->attribution_chat_message_id,
-                'attribution_model' => $practiceAttempt->attribution_model,
-                'attribution_confidence' => $practiceAttempt->attribution_confidence,
-                'attribution_delay_sec' => $practiceAttempt->attribution_delay_sec,
-            ];
+            // Handle session-based preference logs
+            if (isset($validated['session_id']) && $validated['session_id']) {
+                // Verify the session belongs to the authenticated user
+                $session = \App\Models\SplitScreenSession::where('id', $validated['session_id'])
+                    ->where('user_id', $userId)
+                    ->first();
+
+                if (!$session) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Session not found or access denied'
+                    ], 404);
+                }
+
+                // Get attribution data from recent chat messages in the session
+                $recentMessage = \App\Models\ChatMessage::where('user_id', $userId)
+                    ->where('session_id', $validated['session_id'])
+                    ->whereNotNull('model')
+                    ->orderByDesc('created_at')
+                    ->first();
+
+                if ($recentMessage) {
+                    $attributionData = [
+                        'attribution_chat_message_id' => $recentMessage->id,
+                        'attribution_model' => $recentMessage->model,
+                        'attribution_confidence' => 'session',
+                        'attribution_delay_sec' => now()->diffInSeconds($recentMessage->created_at),
+                    ];
+                }
+            }
 
             // Create the preference log entry
             $preferenceLog = AIPreferenceLog::create([
                 'user_id' => $userId,
-                'session_id' => null, // No session for practice completion
+                'session_id' => $validated['session_id'] ?? null,
                 'topic_id' => $validated['topic_id'] ?? null,
                 'interaction_type' => $validated['interaction_type'],
                 'chosen_ai' => $validated['chosen_ai'],
@@ -74,18 +125,19 @@ class AIPreferenceLogController extends Controller
                 'attempt_count' => $validated['attempt_count'] ?? 1,
                 'difficulty_level' => $validated['difficulty_level'] ?? null,
                 'context_data' => $validated['context_data'] ?? [],
-                'attribution_chat_message_id' => $attributionData['attribution_chat_message_id'],
-                'attribution_model' => $attributionData['attribution_model'],
-                'attribution_confidence' => $attributionData['attribution_confidence'],
-                'attribution_delay_sec' => $attributionData['attribution_delay_sec'],
+                'attribution_chat_message_id' => $attributionData['attribution_chat_message_id'] ?? null,
+                'attribution_model' => $attributionData['attribution_model'] ?? null,
+                'attribution_confidence' => $attributionData['attribution_confidence'] ?? null,
+                'attribution_delay_sec' => $attributionData['attribution_delay_sec'] ?? null,
             ]);
 
-            Log::info('AI preference log created from practice completion', [
+            Log::info('AI preference log created', [
                 'user_id' => $userId,
-                'practice_attempt_id' => $validated['practice_attempt_id'],
+                'preference_log_id' => $preferenceLog->id,
                 'chosen_ai' => $validated['chosen_ai'],
                 'interaction_type' => $validated['interaction_type'],
-                'preference_log_id' => $preferenceLog->id,
+                'practice_attempt_id' => $validated['practice_attempt_id'] ?? null,
+                'session_id' => $validated['session_id'] ?? null,
             ]);
 
             return response()->json([

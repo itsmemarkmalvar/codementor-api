@@ -204,33 +204,57 @@ php artisan db:seed
 - The LessonPlanSeeder now checks for existing lesson plans to prevent duplicates
 - If you see duplicate lesson plans, use the ResetLessonPlansSeeder to clean up
 
-## Tutor Impact Comparative Algorithm (TICA)
+## TICA-E (Tutor Impact Comparative Algorithm - Extended)
 
-We compare `gemini` vs `together` on tutoring impact using within-user comparisons over a recent time window.
+TICA-E extends the original TICA algorithm by incorporating user preference polls alongside traditional performance metrics, creating a hybrid causal-preference analysis.
 
-Parameters:
+### Key Extensions:
+- **Poll-Driven Metrics**: User choice data from AI preference polls
+- **Preference Attribution**: Direct user feedback on AI effectiveness  
+- **Enhanced Correlation**: Links user preferences with performance outcomes
+- **Multi-Source Analysis**: Combines chat-based and poll-based data
 
+### Algorithm Components:
+
+#### Primary Metrics (Poll-Based)
+```
+Success1 = (SuccessfulPolls_m / TotalPolls_m) × 100
+TTF_min = Average(TimeSpent_seconds) / 60
+ΔErrors = max(0, 5 - Average(AttemptCount))
+Rating = (PollChoices_m / TotalPolls) × 100
+```
+
+#### Secondary Metrics (Enhanced)
+```
+PracticeSuccess = Average(SuccessRate_m) / 100
+PracticeAttempts = TotalPolls_m
+PollPreference_m = (PollChoices_m / TotalPolls) × 100
+```
+
+#### Comparative Analysis
+```
+ΔMetric = Metric_Gemini - Metric_Together
+CI = Mean(ΔMetric) ± 1.96 × (SD / √n)
+Winner = Gemini if ΔSuccess1 > 0; Together if ΔSuccess1 < 0; Tie otherwise
+```
+
+### Parameters:
 - Window: `window ∈ {7d, 30d, 90d}`
-- Baseline runs: `K ∈ {1,3,5}`
-- Lookahead: `L` minutes (15/30/60)
 - Minimum sample size: `Nmin` (default 5)
+- Topic filter: `topic_id` (optional)
+- Difficulty filter: `difficulty` (optional)
 
-Per assistant reply at time `t` we compute, looking ahead up to `min(t+L, next_reply)`:
+### Data Sources:
+- **Primary**: AI preference polls from practice, quiz, and code execution
+- **Secondary**: Chat message metadata and performance metrics
+- **Attribution**: Direct user choice linking to performance outcomes
 
-- Next‑run success: `success1 ∈ {0,1}` for the first practice run after `t`
-- Time‑to‑first‑success: `ttf_min` minutes
-- Error reduction: `Δerrors = errors_prior(K) − errors_post(K)`
-- Quiz gain: `Δquiz = avg_quiz(after 1d) − avg_quiz(before 7d)`
-- Rating, fallback, latency: from the chat message metadata
-
-Aggregation:
-
-- Per user/model, average the above; keep `n` = number of replies used
-- Paired deltas per user: `Δ = gemini − together`
-
-Suppression:
-
-- If `n < Nmin`, hide per‑model metrics for that user/model
-- For paired stats, report mean/SE only when paired sample `n ≥ Nmin`
+### Statistical Approach:
+- **Preference Correlation**: Links user choices with performance metrics
+- **Multi-Source Validation**: Combines poll data with objective metrics
+- **Enhanced Confidence**: Multiple data points per comparison
 
 API: `GET /api/analytics/models/compare?window=30d&k_runs=3&lookahead_min=30&topic_id=&difficulty=&nmin=5`
+
+**Algorithm**: TICA-E (Tutor Impact Comparative Algorithm - Extended)
+**Description**: Hybrid causal-preference analysis combining original TICA metrics with poll-based user preferences.

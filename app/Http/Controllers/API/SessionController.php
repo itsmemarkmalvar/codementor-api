@@ -49,15 +49,43 @@ class SessionController extends Controller
                 'ai_models_used' => $request->ai_models
             ];
             
-            $session = \App\Models\PreservedSession::createSession($sessionData);
+            $preservedSession = \App\Models\PreservedSession::createSession($sessionData);
+
+            // Create new split-screen session (engagement-based) for TICA-E tracking
+            $splitScreenSession = SplitScreenSession::create([
+                'user_id' => $userId,
+                'topic_id' => $request->topic_id,
+                'session_type' => $request->session_type,
+                'ai_models_used' => $request->ai_models,
+                'started_at' => now(),
+                'total_messages' => 0,
+                'engagement_score' => 0,
+                'quiz_triggered' => false,
+                'practice_triggered' => false,
+                'session_metadata' => [
+                    'preserved_session_id' => $preservedSession->session_identifier,
+                    'lesson_id' => $request->lesson_id,
+                    'session_type' => $request->session_type
+                ]
+            ]);
+
+            Log::info('Split-screen session created for TICA-E tracking', [
+                'user_id' => $userId,
+                'split_screen_session_id' => $splitScreenSession->id,
+                'preserved_session_id' => $preservedSession->session_identifier,
+                'topic_id' => $request->topic_id,
+                'lesson_id' => $request->lesson_id,
+                'session_type' => $request->session_type
+            ]);
 
             return response()->json([
                 'status' => 'success',
                 'data' => [
-                    'session_id' => $session->session_identifier,
-                    'session_type' => $session->session_type,
-                    'ai_models' => $session->ai_models_used,
-                    'started_at' => $session->created_at,
+                    'session_id' => $splitScreenSession->id, // Return SplitScreenSession ID for engagement tracking
+                    'preserved_session_id' => $preservedSession->session_identifier,
+                    'session_type' => $request->session_type,
+                    'ai_models' => $request->ai_models,
+                    'started_at' => $splitScreenSession->started_at,
                 ]
             ]);
         } catch (\Exception $e) {
