@@ -253,6 +253,7 @@ Route::get('/ai-preference-logs', [AIPreferenceLogController::class, 'getUserPre
         Route::post('/{sessionId}/choice', [SessionController::class, 'recordChoice']);
         Route::post('/{sessionId}/clarification', [SessionController::class, 'requestClarification']);
         Route::post('/{sessionId}/engagement', [SessionController::class, 'incrementEngagement']);
+        Route::get('/{sessionId}/threshold-status', [SessionController::class, 'getThresholdStatus']);
     });
 
     // Preserved session management

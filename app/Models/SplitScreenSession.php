@@ -143,6 +143,40 @@ class SplitScreenSession extends Model
     }
 
     /**
+     * Check if quiz threshold is met (30 points).
+     */
+    public function shouldTriggerQuiz(): bool
+    {
+        return $this->engagement_score >= 30 && !$this->quiz_triggered;
+    }
+
+    /**
+     * Check if practice threshold is met (70 points).
+     */
+    public function shouldTriggerPractice(): bool
+    {
+        return $this->engagement_score >= 70 && !$this->practice_triggered && $this->quiz_triggered;
+    }
+
+    /**
+     * Get current threshold status for frontend.
+     */
+    public function getThresholdStatus(): array
+    {
+        return [
+            'quiz_threshold' => 30,
+            'practice_threshold' => 70,
+            'current_score' => $this->engagement_score,
+            'quiz_unlocked' => $this->engagement_score >= 30,
+            'practice_unlocked' => $this->engagement_score >= 70 && $this->quiz_triggered,
+            'quiz_triggered' => $this->quiz_triggered,
+            'practice_triggered' => $this->practice_triggered,
+            'points_to_quiz' => max(0, 30 - $this->engagement_score),
+            'points_to_practice' => max(0, 70 - $this->engagement_score),
+        ];
+    }
+
+    /**
      * Get TICA metrics for this session.
      */
     public function getTicaMetrics(): array

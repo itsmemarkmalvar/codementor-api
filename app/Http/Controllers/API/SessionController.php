@@ -440,6 +440,7 @@ class SessionController extends Controller
                     'session' => $session->toArray(),
                     'is_active' => true,
                     'should_trigger_engagement' => $session->shouldTriggerEngagement(),
+                    'threshold_status' => $session->getThresholdStatus(),
                 ]
             ]);
         } catch (\Exception $e) {
@@ -447,6 +448,44 @@ class SessionController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to get active session',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get threshold status for a session
+     */
+    public function getThresholdStatus($sessionId)
+    {
+        try {
+            $userId = Auth::id();
+            $session = SplitScreenSession::where('id', $sessionId)
+                ->where('user_id', $userId)
+                ->first();
+
+            if (!$session) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'session_id' => $session->id,
+                    'threshold_status' => $session->getThresholdStatus(),
+                    'engagement_score' => $session->engagement_score,
+                    'quiz_triggered' => $session->quiz_triggered,
+                    'practice_triggered' => $session->practice_triggered,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting threshold status: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to get threshold status',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -484,12 +523,42 @@ class SessionController extends Controller
             $points = $request->points ?? 1;
             $session->incrementEngagement($points);
 
+            // Check for threshold triggers after incrementing
+            $thresholdStatus = $session->getThresholdStatus();
+            $triggeredActivities = [];
+
+            // Check if quiz should be triggered
+            if ($session->shouldTriggerQuiz()) {
+                $session->markQuizTriggered();
+                $triggeredActivities[] = 'quiz';
+                Log::info('Quiz threshold triggered for session', [
+                    'session_id' => $session->id,
+                    'user_id' => $userId,
+                    'engagement_score' => $session->engagement_score
+                ]);
+            }
+
+            // Check if practice should be triggered
+            if ($session->shouldTriggerPractice()) {
+                $session->markPracticeTriggered();
+                $triggeredActivities[] = 'practice';
+                Log::info('Practice threshold triggered for session', [
+                    'session_id' => $session->id,
+                    'user_id' => $userId,
+                    'engagement_score' => $session->engagement_score
+                ]);
+            }
+
             return response()->json([
                 'status' => 'success',
                 'data' => [
                     'session_id' => $session->id,
                     'engagement_score' => $session->engagement_score,
                     'should_trigger_engagement' => $session->shouldTriggerEngagement(),
+                    'threshold_status' => $session->getThresholdStatus(),
+                    'triggered_activities' => $triggeredActivities,
+                    'quiz_triggered' => $session->quiz_triggered,
+                    'practice_triggered' => $session->practice_triggered,
                 ]
             ]);
         } catch (\Exception $e) {
