@@ -50,7 +50,7 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 
 // Health (public)
 Route::get('/health/piston', [HealthController::class, 'piston']);
-Route::get('/health/judge0', [HealthController::class, 'judge0']);
+// Judge0 health check removed - using local Java execution only
 
 // Testing route - remove in production
 Route::get('/test-user-create', function() {

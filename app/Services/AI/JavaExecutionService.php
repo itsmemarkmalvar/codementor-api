@@ -161,37 +161,7 @@ class JavaExecutionService
             // Choose execution provider
             $provider = strtolower((string) env('CODE_EXECUTION_PROVIDER', 'local'));
             
-            // Judge0 path: compile+run remotely per test case via Judge0 API
-            if ($provider === 'judge0') {
-                $testResults = [];
-                $allPassed = true;
-                foreach ($testCases as $index => $testCase) {
-                    $testInput = $testCase['input'] ?? '';
-                    $expectedOutput = (string) ($testCase['expected_output'] ?? '');
-                    $result = $this->executeViaJudge0Single($code, $testInput);
-                    $actualOutput = (string) ($result['stdout'] ?? '');
-
-                    // Normalize line endings and trim each line for comparison
-                    $norm = function (string $s) {
-                        $s = str_replace(["\r\n", "\r"], "\n", $s);
-                        $lines = array_map(fn($l) => rtrim($l, " \t"), explode("\n", $s));
-                        return trim(implode("\n", $lines));
-                    };
-                    $passed = ($norm($actualOutput) === $norm($expectedOutput)) && ($result['success'] ?? false);
-                    $testResults[] = [
-                        'passed' => $passed,
-                        'expected' => $expectedOutput,
-                        'actual' => $actualOutput,
-                        'error' => ($result['stderr'] ?? null)
-                    ];
-                    if (!$passed) { $allPassed = false; }
-                }
-                return [
-                    'success' => $allPassed,
-                    'test_results' => $testResults,
-                    'execution_time' => 0,
-                ];
-            }
+            // Judge0 support removed - using local execution only
 
             // Piston path: compile+run remotely per test case (simple, robust)
             if ($provider === 'piston') {
@@ -302,9 +272,7 @@ class JavaExecutionService
         try {
             $provider = strtolower((string) env('CODE_EXECUTION_PROVIDER', 'local'));
 
-            if ($provider === 'judge0') {
-                return $this->executeViaJudge0Single($code, $input);
-            }
+            // Judge0 support removed - using local execution only
 
             if ($provider === 'piston') {
                 return $this->executeViaPistonSingle($code, $input);
@@ -382,9 +350,7 @@ class JavaExecutionService
         try {
             $provider = strtolower((string) env('CODE_EXECUTION_PROVIDER', 'local'));
 
-            if ($provider === 'judge0') {
-                return $this->executeViaJudge0Project($files, $mainClass, $input);
-            }
+            // Judge0 support removed - using local execution only
 
             if ($provider === 'piston') {
                 return $this->executeViaPistonProject($files, $mainClass, $input);
@@ -916,183 +882,9 @@ class JavaExecutionService
         }
     }
 
-    /**
-     * Execute single-file Java via Judge0 API (RapidAPI Judge0 CE).
-     *
-     * @param string $code
-     * @param string|null $input
-     * @return array
-     */
-    protected function executeViaJudge0Single(string $code, ?string $input = null): array
-    {
-        try {
-            $apiUrl = rtrim((string) env('JUDGE0_API_URL', ''), '/');
-            $apiHost = (string) env('JUDGE0_API_HOST', '');
-            $apiKey  = (string) env('JUDGE0_API_KEY', '');
-            $langId  = (int) env('JUDGE0_LANGUAGE_ID_JAVA', 62);
+    // Judge0 methods removed - using local execution only
 
-            if (empty($apiUrl) || empty($apiHost) || empty($apiKey)) {
-                throw new Exception('Judge0 API configuration missing');
-            }
-
-            // Ensure public class is Main for Judge0 default run
-            $className = $this->extractClassName($code) ?? 'Main';
-            $pistonStyle = $code;
-            if (strcasecmp($className, 'Main') !== 0) {
-                $replaced = preg_replace('/public\s+class\s+' . preg_quote($className, '/') . '\b/', 'public class Main', $pistonStyle, 1);
-                if (is_string($replaced) && $replaced !== $pistonStyle) {
-                    $pistonStyle = $replaced;
-                } else {
-                    $pistonStyle = "public class Main {\n" . $code . "\n}";
-                }
-            }
-
-            $payload = [
-                'language_id' => $langId,
-                'source_code' => base64_encode($pistonStyle),
-                'stdin' => base64_encode($input ?? ''),
-            ];
-
-            $endpoint = $apiUrl . '/submissions?base64_encoded=true&wait=true';
-            $t0 = microtime(true);
-            $response = Http::timeout(15)
-                ->withHeaders([
-                    'X-RapidAPI-Host' => $apiHost,
-                    'X-RapidAPI-Key'  => $apiKey,
-                    'Content-Type'    => 'application/json',
-                ])->post($endpoint, $payload);
-
-            $ms = (int) round((microtime(true) - $t0) * 1000);
-            if (!$response->ok()) {
-                return [
-                    'success' => false,
-                    'stdout' => '',
-                    'stderr' => 'Judge0 error: HTTP ' . $response->status(),
-                    'executionTime' => $ms,
-                ];
-            }
-            $data = $response->json() ?: [];
-            $statusId = (int) ($data['status']['id'] ?? 0); // 3 = Accepted
-            $stdout = isset($data['stdout']) ? base64_decode($data['stdout']) : '';
-            $stderr = '';
-            if (!empty($data['stderr'])) { $stderr = base64_decode($data['stderr']); }
-            elseif (!empty($data['compile_output'])) { $stderr = base64_decode($data['compile_output']); }
-            elseif (!empty($data['message'])) { $stderr = $data['message']; }
-
-            return [
-                'success' => ($statusId === 3) && empty($stderr),
-                'stdout' => (string) $stdout,
-                'stderr' => (string) $stderr,
-                'executionTime' => $ms,
-            ];
-        } catch (Exception $e) {
-            Log::error('Judge0 single-file execution error: ' . $e->getMessage());
-            return [
-                'success' => false,
-                'stdout' => '',
-                'stderr' => 'Remote executor error (Judge0): ' . $e->getMessage(),
-                'executionTime' => 0,
-            ];
-        }
-    }
-
-    /**
-     * Execute multi-file Java project via Judge0 (best-effort using additional_files).
-     * Falls back with a clear error if unsupported by the configured endpoint.
-     */
-    protected function executeViaJudge0Project(array $files, string $mainClass, ?string $input = null): array
-    {
-        try {
-            $apiUrl = rtrim((string) env('JUDGE0_API_URL', ''), '/');
-            $apiHost = (string) env('JUDGE0_API_HOST', '');
-            $apiKey  = (string) env('JUDGE0_API_KEY', '');
-            $langId  = (int) env('JUDGE0_LANGUAGE_ID_JAVA', 62);
-
-            if (empty($apiUrl) || empty($apiHost) || empty($apiKey)) {
-                throw new Exception('Judge0 API configuration missing');
-            }
-
-            // Build a wrapper Main launcher that calls the provided main class
-            $launcher = "public class Main {\n  public static void main(String[] args) {\n    try {\n      " . $mainClass . ".main(args);\n    } catch (Throwable t) { t.printStackTrace(); }\n  }\n}";
-
-            // Build a ZIP archive for additional_files
-            $tmpZip = tempnam(sys_get_temp_dir(), 'j0zip_');
-            if ($tmpZip === false) { throw new Exception('Failed to create temp file for zip'); }
-            $zip = new \ZipArchive();
-            if ($zip->open($tmpZip, \ZipArchive::OVERWRITE) !== true) {
-                throw new Exception('Failed to open zip archive');
-            }
-            foreach ($files as $file) {
-                if (!isset($file['path']) || !isset($file['content'])) { continue; }
-                $path = ltrim((string) $file['path'], '/');
-                // Ensure .java extension
-                if (!Str::endsWith($path, '.java')) { $path .= '.java'; }
-                $zip->addFromString($path, (string) $file['content']);
-            }
-            $zip->close();
-            $zipData = file_get_contents($tmpZip) ?: '';
-            @unlink($tmpZip);
-
-            if ($zipData === '') {
-                return [
-                    'success' => false,
-                    'stdout' => '',
-                    'stderr' => 'No Java files found for project execution.',
-                    'executionTime' => 0,
-                ];
-            }
-
-            $payload = [
-                'language_id' => $langId,
-                'source_code' => base64_encode($launcher),
-                'additional_files' => base64_encode($zipData),
-                'stdin' => base64_encode($input ?? ''),
-            ];
-
-            $endpoint = $apiUrl . '/submissions?base64_encoded=true&wait=true';
-            $t0 = microtime(true);
-            $response = Http::timeout(20)
-                ->withHeaders([
-                    'X-RapidAPI-Host' => $apiHost,
-                    'X-RapidAPI-Key'  => $apiKey,
-                    'Content-Type'    => 'application/json',
-                ])->post($endpoint, $payload);
-
-            $ms = (int) round((microtime(true) - $t0) * 1000);
-            if (!$response->ok()) {
-                // Fallback message, multi-file may not be supported on CE endpoint
-                return [
-                    'success' => false,
-                    'stdout' => '',
-                    'stderr' => 'Judge0 project execution not available (HTTP ' . $response->status() . ').',
-                    'executionTime' => $ms,
-                ];
-            }
-
-            $data = $response->json() ?: [];
-            $statusId = (int) ($data['status']['id'] ?? 0);
-            $stdout = isset($data['stdout']) ? base64_decode($data['stdout']) : '';
-            $stderr = '';
-            if (!empty($data['stderr'])) { $stderr = base64_decode($data['stderr']); }
-            elseif (!empty($data['compile_output'])) { $stderr = base64_decode($data['compile_output']); }
-            elseif (!empty($data['message'])) { $stderr = $data['message']; }
-
-            return [
-                'success' => ($statusId === 3) && empty($stderr),
-                'stdout' => (string) $stdout,
-                'stderr' => (string) $stderr,
-                'executionTime' => $ms,
-            ];
-        } catch (Exception $e) {
-            Log::error('Judge0 project execution error: ' . $e->getMessage());
-            return [
-                'success' => false,
-                'stdout' => '',
-                'stderr' => 'Remote executor error (Judge0 project): ' . $e->getMessage(),
-                'executionTime' => 0,
-            ];
-        }
-    }
+    // Judge0 project execution method removed - using local execution only
 
     /**
      * Run compiled Java project
