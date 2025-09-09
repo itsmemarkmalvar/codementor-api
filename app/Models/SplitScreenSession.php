@@ -11,6 +11,7 @@ class SplitScreenSession extends Model
     protected $fillable = [
         'user_id',
         'topic_id',
+        'lesson_id',
         'session_type',
         'ai_models_used',
         'started_at',

@@ -2003,15 +2003,37 @@ class AITutorController extends Controller
                 ], 404);
             }
 
-            // Update conversation history
+            // Append + dedupe + cap
+            $incoming = $request->conversation_history ?? [];
+            $existing = $session->conversation_history ?? [];
+            if (!is_array($existing)) { $existing = []; }
+            $merged = array_merge($existing, $incoming);
+
+            $assoc = [];
+            foreach ($merged as $msg) {
+                $id = isset($msg['id']) ? (string)$msg['id'] : uniqid('msg_', true);
+                $assoc[$id] = [
+                    'id' => $id,
+                    'text' => $msg['text'] ?? '',
+                    'sender' => $msg['sender'] ?? null,
+                    'timestamp' => $msg['timestamp'] ?? null,
+                    '_model' => $msg['_model'] ?? null,
+                ];
+            }
+            $deduped = array_values($assoc);
+            $CAP = 1000;
+            if (count($deduped) > $CAP) {
+                $deduped = array_slice($deduped, -$CAP);
+            }
+
             $session->update([
-                'conversation_history' => $request->conversation_history,
+                'conversation_history' => $deduped,
                 'last_activity' => now()
             ]);
 
             Log::info('Conversation history updated', [
                 'session_id' => $sessionId,
-                'message_count' => count($request->conversation_history)
+                'message_count' => count($deduped)
             ]);
 
             return response()->json([

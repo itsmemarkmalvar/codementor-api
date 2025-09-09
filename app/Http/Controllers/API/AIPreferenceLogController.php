@@ -20,6 +20,7 @@ class AIPreferenceLogController extends Controller
         try {
             $validated = $request->validate([
                 'practice_attempt_id' => 'nullable|integer|exists:practice_attempts,id',
+                'quiz_attempt_id' => 'nullable|integer|exists:quiz_attempts,id',
                 'session_id' => 'nullable|integer|exists:split_screen_sessions,id',
                 'chosen_ai' => 'required|string|in:gemini,together,both,neither',
                 'choice_reason' => 'nullable|string|max:500',
@@ -80,6 +81,37 @@ class AIPreferenceLogController extends Controller
                 ];
             }
 
+            // Handle quiz-based preference logs
+            if (isset($validated['quiz_attempt_id']) && $validated['quiz_attempt_id']) {
+                // Verify the quiz attempt belongs to the authenticated user
+                $quizAttempt = \App\Models\QuizAttempt::where('id', $validated['quiz_attempt_id'])
+                    ->where('user_id', $userId)
+                    ->first();
+
+                if (!$quizAttempt) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Quiz attempt not found or access denied'
+                    ], 404);
+                }
+
+                // Get attribution data from the quiz attempt
+                // Convert ENUM attribution_confidence to decimal for AIPreferenceLog
+                $confidenceValue = match($quizAttempt->attribution_confidence) {
+                    'explicit' => 0.95,
+                    'session' => 0.85,
+                    'temporal' => 0.75,
+                    default => 0.80,
+                };
+                
+                $attributionData = [
+                    'attribution_chat_message_id' => $quizAttempt->attribution_chat_message_id,
+                    'attribution_model' => $quizAttempt->attribution_model,
+                    'attribution_confidence' => $confidenceValue,
+                    'attribution_delay_sec' => $quizAttempt->attribution_delay_sec,
+                ];
+            }
+
             // Handle session-based preference logs
             if (isset($validated['session_id']) && $validated['session_id']) {
                 // Verify the session belongs to the authenticated user
@@ -105,7 +137,7 @@ class AIPreferenceLogController extends Controller
                     $attributionData = [
                         'attribution_chat_message_id' => $recentMessage->id,
                         'attribution_model' => $recentMessage->model,
-                        'attribution_confidence' => 'session',
+                        'attribution_confidence' => 0.85, // Convert 'session' to decimal
                         'attribution_delay_sec' => now()->diffInSeconds($recentMessage->created_at),
                     ];
                 }
