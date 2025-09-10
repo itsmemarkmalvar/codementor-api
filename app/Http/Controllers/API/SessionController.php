@@ -36,33 +36,47 @@ class SessionController extends Controller
             $userId = Auth::id();
             // Reuse existing active split-screen session for the same lesson if present
             if ($request->lesson_id) {
-                $existingForLesson = SplitScreenSession::where('user_id', $userId)
+                $existingActive = SplitScreenSession::where('user_id', $userId)
                     ->where('lesson_id', $request->lesson_id)
                     ->whereNull('ended_at')
                     ->first();
-                if ($existingForLesson) {
+                if ($existingActive) {
                     return response()->json([
                         'status' => 'success',
                         'data' => [
-                            'session_id' => $existingForLesson->id,
-                            'preserved_session_id' => null,
-                            'session_type' => $existingForLesson->session_type,
-                            'ai_models' => $existingForLesson->ai_models_used,
-                            'started_at' => $existingForLesson->started_at,
+                            'session_id' => $existingActive->id,
+                            'preserved_session_id' => $existingActive->session_metadata['preserved_session_id'] ?? null,
+                            'session_type' => $existingActive->session_type,
+                            'ai_models' => $existingActive->ai_models_used,
+                            'started_at' => $existingActive->started_at,
+                        ]
+                    ]);
+                }
+
+                // No active session. Try to reactivate the most recent ended session for this lesson
+                $recentEnded = SplitScreenSession::where('user_id', $userId)
+                    ->where('lesson_id', $request->lesson_id)
+                    ->whereNotNull('ended_at')
+                    ->orderByDesc('ended_at')
+                    ->first();
+                if ($recentEnded) {
+                    $recentEnded->ended_at = null;
+                    // Do not reset engagement or flags on reactivation
+                    $recentEnded->save();
+                    return response()->json([
+                        'status' => 'success',
+                        'data' => [
+                            'session_id' => $recentEnded->id,
+                            'preserved_session_id' => $recentEnded->session_metadata['preserved_session_id'] ?? null,
+                            'session_type' => $recentEnded->session_type,
+                            'ai_models' => $recentEnded->ai_models_used,
+                            'started_at' => $recentEnded->started_at,
                         ]
                     ]);
                 }
             }
-            
-            // End any existing active session for this user for the SAME lesson
-            if ($request->lesson_id) {
-                SplitScreenSession::where('user_id', $userId)
-                    ->where('lesson_id', $request->lesson_id)
-                    ->whereNull('ended_at')
-                    ->update(['ended_at' => now()]);
-            }
 
-            // Create new preserved session (lesson-based)
+            // Create new preserved session (lesson-based) - only if none existed for this lesson
             $sessionData = [
                 'user_id' => $userId,
                 'topic_id' => $request->topic_id,
