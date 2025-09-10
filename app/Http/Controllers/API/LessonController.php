@@ -750,16 +750,36 @@ class LessonController extends Controller
                             ->get()
                             ->keyBy('module_id');
             
-            // Calculate overall lesson plan progress as average of module progress percentages
+            // Calculate module-based overall lesson plan progress as average of module percentages
             $totalModules = count($moduleIds);
-            $sumPercent = 0;
-            $count = 0;
+            $sumPercent = 0; $count = 0;
             foreach ($lessonPlan->modules as $module) {
                 $progress = $moduleProgress->get($module->id);
                 $sumPercent += $progress ? (int) $progress->progress_percentage : 0;
                 $count++;
             }
             $overallPercentage = $count > 0 ? (int) round($sumPercent / $count) : 0;
+
+            // Engagement-based overall progress (requested behavior): scale engagement to 0-100.
+            // We map 70 engagement points (practice threshold) to 100%.
+            $engagementOverall = null; $engagementScore = null; $progressSource = 'modules';
+            try {
+                // Use FQCN to avoid missing imports
+                $latestSession = \App\Models\SplitScreenSession::where('user_id', $userId)
+                    ->where('lesson_id', (int) $lessonPlanId)
+                    ->orderByDesc('updated_at')
+                    ->first();
+
+                if ($latestSession) {
+                    $engagementScore = (int) ($latestSession->engagement_score ?? 0);
+                    // 70 -> 100%, cap at 100
+                    $engagementOverall = (int) max(0, min(100, round(($engagementScore / 70) * 100)));
+                    $progressSource = 'engagement';
+                }
+            } catch (\Throwable $e) {
+                // Fall back silently if sessions not available
+                \Log::warning('Engagement progress lookup failed', ['lessonPlanId' => $lessonPlanId, 'error' => $e->getMessage()]);
+            }
             
             // Format the progress data
             $formattedProgress = [];
@@ -784,6 +804,10 @@ class LessonController extends Controller
                     'lesson_plan_id' => $lessonPlan->id,
                     'lesson_plan_title' => $lessonPlan->title,
                     'overall_percentage' => $overallPercentage,
+                    // New: engagement-driven overall percentage and meta
+                    'engagement_overall_percentage' => $engagementOverall,
+                    'engagement_score' => $engagementScore,
+                    'progress_source' => $engagementOverall !== null ? 'engagement' : $progressSource,
                     'completed_modules' => $moduleProgress->where('status', 'completed')->count(),
                     'total_modules' => $totalModules,
                     'module_progress' => $formattedProgress
