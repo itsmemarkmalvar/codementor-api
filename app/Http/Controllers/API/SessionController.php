@@ -223,6 +223,16 @@ class SessionController extends Controller
             // Get performance metrics from recent attempts
             $performanceMetrics = $this->getPerformanceMetrics($userId, $activityType, $session->topic_id, $sessionId);
 
+            // Normalize attribution-related fields for DB compatibility
+            $attributionConfidence = $this->mapConfidenceToDecimal($performanceMetrics['attribution_confidence'] ?? null);
+            $attributionDelay = $performanceMetrics['attribution_delay_sec'] ?? null;
+            if (is_numeric($attributionDelay)) {
+                // Guard against negative delays; store null if invalid
+                $attributionDelay = max(0, (int)$attributionDelay);
+            } else {
+                $attributionDelay = null;
+            }
+
             // Store in AIPreferenceLog table
             $preferenceLog = \App\Models\AIPreferenceLog::create([
                 'user_id' => $userId,
@@ -239,8 +249,8 @@ class SessionController extends Controller
                 'context_data' => $performanceMetrics['context_data'] ?? [],
                 'attribution_chat_message_id' => $performanceMetrics['attribution_chat_message_id'] ?? null,
                 'attribution_model' => $performanceMetrics['attribution_model'] ?? null,
-                'attribution_confidence' => $performanceMetrics['attribution_confidence'] ?? null,
-                'attribution_delay_sec' => $performanceMetrics['attribution_delay_sec'] ?? null,
+                'attribution_confidence' => $attributionConfidence,
+                'attribution_delay_sec' => $attributionDelay,
             ]);
 
             return response()->json([
@@ -263,6 +273,36 @@ class SessionController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Map string confidence labels (e.g., 'explicit', 'temporal') to decimal.
+     * If already numeric, return a float rounded to 4 decimals. Unknown → null.
+     */
+    private function mapConfidenceToDecimal($value): ?float
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_numeric($value)) {
+            return round((float)$value, 4);
+        }
+
+        $normalized = strtolower(trim((string)$value));
+
+        return match ($normalized) {
+            'very_high' => 0.95,
+            'high' => 0.85,
+            'explicit' => 0.85,
+            'strong' => 0.8,
+            'medium' => 0.6,
+            'temporal' => 0.6,
+            'weak' => 0.4,
+            'low' => 0.35,
+            'very_low' => 0.2,
+            default => null,
+        };
     }
 
     /**

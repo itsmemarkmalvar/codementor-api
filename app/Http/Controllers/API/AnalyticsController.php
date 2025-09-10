@@ -730,6 +730,7 @@ class AnalyticsController extends Controller
      */
     private function analyzeQuizPreferences($userId, $startDate, $topicId = null, $difficulty = null)
     {
+        $quizPassThreshold = 70; // percent
         // Get preference logs for quiz
         $preferenceLogs = \App\Models\AIPreferenceLog::where('user_id', $userId)
             ->where('interaction_type', 'quiz')
@@ -752,20 +753,40 @@ class AnalyticsController extends Controller
         $passedAttempts = $quizAttempts->where('passed', true)->count();
         $overallPassRate = $totalAttempts > 0 ? round(($passedAttempts / $totalAttempts) * 100, 2) : 0;
 
-        // Analyze by model
+        // Analyze by model using attributed quiz attempts; fallback to poll logs when absent
         $modelAnalysis = [];
         foreach (['gemini', 'together'] as $model) {
             $modelAttempts = $quizAttempts->where('attribution_model', $model);
             $modelTotal = $modelAttempts->count();
             $modelPassed = $modelAttempts->where('passed', true)->count();
-            
-            $modelAnalysis[$model] = [
+
+            $row = [
                 'total_attempts' => $modelTotal,
                 'passed_attempts' => $modelPassed,
                 'pass_rate' => $modelTotal > 0 ? round(($modelPassed / $modelTotal) * 100, 2) : 0,
                 'avg_score' => $modelTotal > 0 ? round($modelAttempts->avg('percentage'), 2) : 0,
                 'avg_time_spent_seconds' => $modelTotal > 0 ? round($modelAttempts->avg('time_spent_seconds'), 2) : 0,
             ];
+
+            // Fallback: if no attributed attempts, derive metrics from poll logs (chosen_ai)
+            if ($row['total_attempts'] === 0) {
+                $aiPrefs = $preferenceLogs->where('chosen_ai', $model);
+                $prefsCount = $aiPrefs->count();
+                if ($prefsCount > 0) {
+                    $passedPrefs = $aiPrefs->filter(function ($p) use ($quizPassThreshold) {
+                        $score = is_numeric($p->performance_score) ? (float) $p->performance_score : null;
+                        return $score !== null && $score >= $quizPassThreshold;
+                    })->count();
+
+                    $row['total_attempts'] = $prefsCount;
+                    $row['passed_attempts'] = $passedPrefs;
+                    $row['pass_rate'] = round(($passedPrefs / max(1, $prefsCount)) * 100, 2);
+                    $row['avg_score'] = round((float) $aiPrefs->avg('performance_score'), 2);
+                    $row['avg_time_spent_seconds'] = (int) round((float) $aiPrefs->avg('time_spent_seconds'));
+                }
+            }
+
+            $modelAnalysis[$model] = $row;
         }
 
         // Get user choice preferences from preference logs
