@@ -300,6 +300,12 @@ class PracticeController extends Controller
                     }
                 }
             }
+            // If the problem has no test cases configured, do NOT allow a pass by default
+            if ((empty($problem->test_cases) || !is_array($problem->test_cases) || count($problem->test_cases) === 0) && count($testResults) === 0) {
+                $allTestsPassed = false;
+                // Provide a helpful message in output to make it clear why it failed
+                $runtimeErrors[] = 'This practice problem has no test cases configured yet. Please contact the instructor if this persists.';
+            }
             
             // Create an attempt record
             $attemptData = [
