@@ -386,6 +386,37 @@ class PracticeController extends Controller
                 $this->getErrorFeedback($problem, $attempt);
             
             $attempt->update(['feedback' => $feedback]);
+
+            // If practice is unlocked and success conditions met, mark session practice completed
+            try {
+                if (\Illuminate\Support\Facades\Auth::check()) {
+                    $userId = \Illuminate\Support\Facades\Auth::id();
+                    $activeSession = \App\Models\SplitScreenSession::where('user_id', $userId)
+                        ->whereNull('ended_at')
+                        ->orderByDesc('id')
+                        ->first();
+                    if ($activeSession && $activeSession->practice_triggered && !$activeSession->practice_completed) {
+                        // Completion rule: either this attempt is correct OR user has >= 2 correct attempts after practice_required_at
+                        $since = $activeSession->practice_required_at ?? $activeSession->started_at ?? now()->subDay();
+                        $correctCount = PracticeAttempt::where('user_id', $userId)
+                            ->where('is_correct', true)
+                            ->where('created_at', '>=', $since)
+                            ->count();
+                        if ($allTestsPassed || $correctCount >= 2) {
+                            // Mark completed and award engagement points once
+                            $activeSession->markPracticeCompleted();
+                            try {
+                                // Award engagement for completing practice
+                                $activeSession->incrementEngagement(8);
+                            } catch (\Throwable $e2) {
+                                \Log::warning('[Practice] Unable to increment engagement on completion: ' . $e2->getMessage());
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('[Practice] Unable to mark practice completed: ' . $e->getMessage());
+            }
             
             return response()->json([
                 'status' => 'success',

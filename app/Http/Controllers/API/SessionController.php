@@ -523,6 +523,7 @@ class SessionController extends Controller
                     'is_active' => true,
                     'should_trigger_engagement' => $session->shouldTriggerEngagement(),
                     'threshold_status' => $session->getThresholdStatus(),
+                    'practice_completed' => $session->practice_completed,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -561,6 +562,7 @@ class SessionController extends Controller
                     'engagement_score' => $session->engagement_score,
                     'quiz_triggered' => $session->quiz_triggered,
                     'practice_triggered' => $session->practice_triggered,
+                    'practice_completed' => $session->practice_completed,
                 ]
             ]);
         } catch (\Exception $e) {

@@ -20,6 +20,9 @@ class SplitScreenSession extends Model
         'engagement_score',
         'quiz_triggered',
         'practice_triggered',
+        'practice_required_at',
+        'practice_completed',
+        'practice_completed_at',
         'user_choice',
         'choice_reason',
         'clarification_needed',
@@ -33,6 +36,7 @@ class SplitScreenSession extends Model
         'ended_at' => 'datetime',
         'quiz_triggered' => 'boolean',
         'practice_triggered' => 'boolean',
+        'practice_completed' => 'boolean',
         'clarification_needed' => 'boolean',
         'session_metadata' => 'array',
     ];
@@ -112,6 +116,21 @@ class SplitScreenSession extends Model
     public function markPracticeTriggered(): void
     {
         $this->practice_triggered = true;
+        if ($this->practice_required_at === null) {
+            $this->practice_required_at = now();
+        }
+        $this->save();
+    }
+
+    /**
+     * Mark practice as completed
+     */
+    public function markPracticeCompleted(): void
+    {
+        $this->practice_completed = true;
+        if ($this->practice_completed_at === null) {
+            $this->practice_completed_at = now();
+        }
         $this->save();
     }
 
@@ -172,6 +191,9 @@ class SplitScreenSession extends Model
             'practice_unlocked' => $this->engagement_score >= 70 && $this->quiz_triggered,
             'quiz_triggered' => $this->quiz_triggered,
             'practice_triggered' => $this->practice_triggered,
+            'practice_completed' => $this->practice_completed,
+            'practice_required_at' => $this->practice_required_at,
+            'practice_completed_at' => $this->practice_completed_at,
             'points_to_quiz' => max(0, 30 - $this->engagement_score),
             'points_to_practice' => max(0, 70 - $this->engagement_score),
         ];
