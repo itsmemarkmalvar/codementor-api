@@ -10,6 +10,9 @@ use App\Models\ModuleProgress;
 use App\Models\ExerciseAttempt;
 use App\Models\LearningTopic;
 use App\Models\PracticeProblem;
+use App\Models\SplitScreenSession;
+use App\Models\UserLessonCompletion;
+use Laravel\Sanctum\PersonalAccessToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -47,6 +50,111 @@ class LessonController extends Controller
 				$lessonPlans = $query->orderBy('id')->get();
 			}
             
+            // Attach lock state based on prerequisites and user completions
+            try {
+                $userId = Auth::id();
+                if ($userId) {
+                    $completedLessonIds = \App\Models\UserLessonCompletion::where('user_id', $userId)->pluck('lesson_plan_id')->toArray();
+                    foreach ($lessonPlans as $plan) {
+                        $reqIds = [];
+                        if (!empty($plan->prerequisites)) {
+                            $reqIds = array_values(array_filter(array_map('intval', array_map('trim', explode(',', $plan->prerequisites)))));
+                        }
+                        $missing = array_values(array_diff($reqIds, $completedLessonIds));
+                        $plan->is_locked = count($missing) > 0;
+                        $plan->missing_prereq_ids = $missing;
+                    }
+                } else {
+                    foreach ($lessonPlans as $plan) {
+                        $plan->is_locked = !empty($plan->prerequisites);
+                        $plan->missing_prereq_ids = [];
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Failed to compute lesson lock state', ['err' => $e->getMessage()]);
+            }
+            
+            // Attach lock state per lesson based on prerequisites and the user's completions
+            try {
+                // Resolve user id even on public route: try auth, then bearer token
+                $userId = Auth::id();
+                if (!$userId) {
+                    $authHeader = $request->header('Authorization');
+                    if ($authHeader && str_starts_with($authHeader, 'Bearer ')) {
+                        $raw = substr($authHeader, 7);
+                        $pat = PersonalAccessToken::findToken($raw);
+                        if ($pat) { $userId = (int) $pat->tokenable_id; }
+                    }
+                }
+                if (!$userId) { $userId = 1; }
+
+                // Helper to decide completion when no explicit row exists
+                $isCompleted = function (int $planId) use ($userId): bool {
+                    // Module-based completion: average progress 100 or all completed
+                    $moduleIds = LessonModule::where('lesson_plan_id', $planId)->pluck('id')->toArray();
+                    if (!empty($moduleIds)) {
+                        $mods = ModuleProgress::where('user_id', $userId)
+                            ->whereIn('module_id', $moduleIds)
+                            ->get(['progress_percentage','status']);
+                        if ($mods->count() > 0) {
+                            $avg = (int) round($mods->avg('progress_percentage'));
+                            $allCompleted = $mods->every(function ($m) {
+                                return (int)($m->progress_percentage ?? 0) >= 100 || ($m->status === 'completed');
+                            });
+                            if ($avg >= 100 || $allCompleted) { return true; }
+                        }
+                    }
+                    // Engagement-based completion: practice done or score >= 70
+                    $sess = SplitScreenSession::where('user_id', $userId)
+                        ->where('lesson_id', $planId)
+                        ->orderByDesc('updated_at')
+                        ->first(['engagement_score','practice_completed']);
+                    if ($sess && (((int)($sess->engagement_score ?? 0)) >= 70 || (bool)($sess->practice_completed ?? false))) {
+                        return true;
+                    }
+                    return false;
+                };
+
+                $explicitCompletions = UserLessonCompletion::where('user_id', $userId)
+                    ->pluck('lesson_plan_id')->toArray();
+                $completedSet = array_fill_keys($explicitCompletions, true);
+
+                // Resolve prerequisites tokens → IDs; compute lock
+                foreach ($lessonPlans as $plan) {
+                    if (!isset($completedSet[$plan->id]) && $isCompleted((int)$plan->id)) {
+                        $completedSet[$plan->id] = true;
+                    }
+                    $reqIds = [];
+                    if (!empty($plan->prerequisites)) {
+                        $tokens = array_map('trim', explode(',', (string)$plan->prerequisites));
+                        foreach ($tokens as $tok) {
+                            if ($tok === '') { continue; }
+                            if (ctype_digit($tok)) {
+                                $reqIds[] = (int)$tok;
+                                continue;
+                            }
+                            // Resolve by exact title first, then prefix match
+                            $lp = LessonPlan::where('title', $tok)->first(['id']);
+                            if (!$lp) { $lp = LessonPlan::where('title', 'like', $tok.'%')->first(['id']); }
+                            if ($lp) { $reqIds[] = (int)$lp->id; }
+                        }
+                        $reqIds = array_values(array_unique(array_filter($reqIds))); // clean
+                    }
+                    $missing = [];
+                    if (!empty($reqIds)) {
+                        foreach ($reqIds as $rid) {
+                            if (!isset($completedSet[$rid]) && !$isCompleted((int)$rid)) {
+                                $missing[] = (int)$rid;
+                            }
+                        }
+                    }
+                    $plan->is_locked = count($missing) > 0;
+                    $plan->missing_prereq_ids = $missing;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Lesson lock computation failed', ['error' => $e->getMessage()]);
+            }
+
             return response()->json([
                 'status' => 'success',
                 'data' => $lessonPlans,
