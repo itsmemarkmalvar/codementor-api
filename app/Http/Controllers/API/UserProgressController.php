@@ -10,6 +10,7 @@ use App\Models\LearningTopic;
 use Illuminate\Support\Facades\Log;
 use App\Services\Progress\ProgressService;
 use App\Models\ExerciseAttempt;
+use App\Models\PracticeAttempt;
 use App\Models\QuizAttempt;
 
 class UserProgressController extends Controller
@@ -513,8 +514,14 @@ class UserProgressController extends Controller
                 ? (float) round($quizAttempts->avg('percentage'), 2)
                 : 0.0;
 
-            $codeAttemptsTotal = ExerciseAttempt::where('user_id', $userId)->count();
-            $codeAttemptsCorrect = ExerciseAttempt::where('user_id', $userId)->where('is_correct', true)->count();
+            // Combine code metrics from both lesson exercises and practice problems
+            $exerciseTotal = ExerciseAttempt::where('user_id', $userId)->count();
+            $exerciseCorrect = ExerciseAttempt::where('user_id', $userId)->where('is_correct', true)->count();
+            $practiceTotal = PracticeAttempt::where('user_id', $userId)->count();
+            $practiceCorrect = PracticeAttempt::where('user_id', $userId)->where('is_correct', true)->count();
+
+            $codeAttemptsTotal = $exerciseTotal + $practiceTotal;
+            $codeAttemptsCorrect = $exerciseCorrect + $practiceCorrect;
             $codeSuccessRate = $codeAttemptsTotal > 0
                 ? (float) round(($codeAttemptsCorrect / $codeAttemptsTotal) * 100.0, 2)
                 : 0.0;
