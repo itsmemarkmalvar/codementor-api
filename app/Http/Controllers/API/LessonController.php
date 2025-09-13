@@ -781,6 +781,23 @@ class LessonController extends Controller
                 \Log::warning('Engagement progress lookup failed', ['lessonPlanId' => $lessonPlanId, 'error' => $e->getMessage()]);
             }
             
+            // If lesson is complete (modules 100% or engagement-mapped 100%), stamp a completion row
+            try {
+                $isCompleteByModules = ($overallPercentage >= 100);
+                $isCompleteByEngagement = ($engagementOverall !== null && $engagementOverall >= 100);
+                if ($isCompleteByModules || $isCompleteByEngagement) {
+                    \App\Models\UserLessonCompletion::updateOrCreate(
+                        [ 'user_id' => $userId, 'lesson_plan_id' => (int) $lessonPlanId ],
+                        [
+                            'completed_at' => now(),
+                            'source' => $isCompleteByModules && $isCompleteByEngagement ? 'both' : ($isCompleteByModules ? 'modules' : 'engagement')
+                        ]
+                    );
+                }
+            } catch (\Throwable $e) {
+                \Log::warning('Unable to stamp lesson completion', ['lessonPlanId' => $lessonPlanId, 'userId' => $userId, 'err' => $e->getMessage()]);
+            }
+
             // Format the progress data
             $formattedProgress = [];
             foreach ($lessonPlan->modules as $module) {

@@ -12,6 +12,9 @@ use App\Services\Progress\ProgressService;
 use App\Models\ExerciseAttempt;
 use App\Models\PracticeAttempt;
 use App\Models\QuizAttempt;
+use App\Models\UserLessonCompletion;
+use App\Models\ChatMessage;
+use Carbon\Carbon;
 
 class UserProgressController extends Controller
 {
@@ -456,6 +459,47 @@ class UserProgressController extends Controller
                 return (int) ($p->progress_percentage ?? 0) >= 80 || ($p->status === 'completed');
             })->count();
             $bestStreak = (int) $progress->max('current_streak_days');
+            // Compute Active Streak: consecutive days up to today with any activity
+            try {
+                $now = Carbon::now();
+                $startWindow = $now->copy()->subDays(365);
+                $dayKey = function ($ts) { return Carbon::parse($ts)->toDateString(); };
+
+                $activeDays = collect();
+                // From topic progress last interaction
+                foreach ($progress as $p) {
+                    if (!empty($p->last_interaction_at)) { $activeDays->push($dayKey($p->last_interaction_at)); }
+                }
+                // From chat
+                $chatDays = ChatMessage::where('user_id', $userId)
+                    ->whereBetween('created_at', [$startWindow, $now])
+                    ->pluck('created_at')
+                    ->map($dayKey);
+                $activeDays = $activeDays->merge($chatDays);
+                // From practice attempts
+                $prDays = PracticeAttempt::where('user_id', $userId)
+                    ->whereBetween('created_at', [$startWindow, $now])
+                    ->pluck('created_at')
+                    ->map($dayKey);
+                $activeDays = $activeDays->merge($prDays);
+                // From quiz attempts
+                $qzDays = QuizAttempt::where('user_id', $userId)
+                    ->whereBetween('created_at', [$startWindow, $now])
+                    ->pluck('created_at')
+                    ->map($dayKey);
+                $activeDays = $activeDays->merge($qzDays);
+
+                $daySet = $activeDays->unique()->flip();
+                $activeStreak = 0;
+                $cursor = Carbon::today();
+                while ($daySet->has($cursor->toDateString())) {
+                    $activeStreak++;
+                    $cursor->subDay();
+                }
+            } catch (\Throwable $e) {
+                $activeStreak = 0;
+            }
+            $lessonsCompleted = (int) UserLessonCompletion::where('user_id', $userId)->count();
 
             // Aggregate points from progress_data across topics
             $sumInteraction = 0; $sumCode = 0; $sumQuiz = 0;
@@ -538,9 +582,11 @@ class UserProgressController extends Controller
                     'totals' => [
                         'topics_tracked' => $topicsTracked,
                         'topics_completed' => $topicsCompleted,
+                        'lessons_completed' => $lessonsCompleted,
                         'total_minutes' => $totalMinutes,
                         'avg_progress' => $avgProgress,
                         'best_streak_days' => $bestStreak,
+                        'active_streak_days' => $activeStreak,
                     ],
                     'weighted_breakdown' => $weighted,
                     'recent_progress' => $recent,
