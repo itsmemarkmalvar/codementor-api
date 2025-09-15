@@ -142,8 +142,8 @@ class TutorService
                 'request_body' => json_encode($requestBody, JSON_PRETTY_PRINT)
             ]);
             
-            // Add retries for temporary service issues
-            $maxRetries = 2;
+            // Add retries for temporary service issues (increased for stability)
+            $maxRetries = 3;
             $retryDelay = 1000; // 1 second in milliseconds
             $currentTry = 0;
             
@@ -151,7 +151,8 @@ class TutorService
                 $currentTry++;
                 
                 try {
-                    $response = Http::timeout(30)->withHeaders([
+                    // Increase timeout for Together AI which may occasionally be slower
+                    $response = Http::timeout(45)->withHeaders([
                         'Authorization' => 'Bearer ' . $this->apiKey,
                         'Content-Type' => 'application/json'
                     ])->post($this->apiUrl . '/chat/completions', $requestBody);
@@ -187,8 +188,8 @@ class TutorService
                             'max_tries' => $maxRetries
                         ]);
                         
-                        // If it's a 503 (Service Unavailable) or 429 (Too Many Requests) and we have retries left
-                        if (($statusCode == 503 || $statusCode == 429) && $currentTry < $maxRetries) {
+                        // If it's a temporary error (Service Unavailable/Too Many Requests/Gateway Timeout) and we have retries left
+                        if (in_array($statusCode, [429, 502, 503, 504]) && $currentTry < $maxRetries) {
                             Log::info("Temporary service issue detected, retrying in {$retryDelay}ms. Attempt {$currentTry} of {$maxRetries}");
                             // Sleep for a moment before retrying
                             usleep($retryDelay * 1000); // Convert milliseconds to microseconds

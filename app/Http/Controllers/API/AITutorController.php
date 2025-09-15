@@ -1626,7 +1626,8 @@ class AITutorController extends Controller
                             'response_time_ms' => null,
                             'error' => $errors['gemini'] ?? 'Unknown error'
                         ],
-                        'together' => $togetherResponse ? [
+                        // Treat fallback phrases from Together as errors so UI can preserve state but show a banner
+                        'together' => ($togetherResponse && !preg_match('/Together AI (is not configured|services? (are|is) .* (unavailable|trouble|temporar))/i', $togetherResponse)) ? [
                             'response' => $togetherResponse,
                             'message_id' => $savedMessages['together']->id ?? null,
                             'response_time_ms' => $togetherLatency,
@@ -1635,7 +1636,7 @@ class AITutorController extends Controller
                             'response' => null,
                             'message_id' => null,
                             'response_time_ms' => null,
-                            'error' => $errors['together'] ?? 'Unknown error'
+                            'error' => $errors['together'] ?? ($togetherResponse ?: 'Unknown error')
                         ]
                     ],
                     'session_id' => $session ? $session->id : null,
