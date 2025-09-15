@@ -28,7 +28,13 @@ class LessonController extends Controller
         try {
 			$topic = LearningTopic::findOrFail($topicId);
 			$includeUnpublished = $request->boolean('include_unpublished', false);
-			$query = LessonPlan::where('topic_id', $topicId);
+			// Include module counts for each lesson (respect publish filter)
+			$query = LessonPlan::where('topic_id', $topicId)
+				->withCount(['modules' => function($q) use ($includeUnpublished) {
+					if (!$includeUnpublished) {
+						$q->where('is_published', true);
+					}
+				}]);
 			if (!$includeUnpublished) {
 				$query->where('is_published', true);
 			}
@@ -179,7 +185,13 @@ class LessonController extends Controller
 			$includeUnpublished = $request->boolean('include_unpublished', false);
 			Log::info('Getting lesson plans', ['include_unpublished' => $includeUnpublished]);
 			
-			$base = LessonPlan::query();
+			// Global list should also include module counts (respect publish filter)
+			$base = LessonPlan::query()
+				->withCount(['modules' => function($q) use ($includeUnpublished) {
+					if (!$includeUnpublished) {
+						$q->where('is_published', true);
+					}
+				}]);
 			if (!$includeUnpublished) { $base->where('is_published', true); }
 			// Prefer a stable order across topics: topic then title, with Java Basics in canonical order
 			$lessonPlans = $base->orderBy('topic_id')
