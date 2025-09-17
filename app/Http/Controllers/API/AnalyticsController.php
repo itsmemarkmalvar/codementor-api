@@ -800,10 +800,31 @@ class AnalyticsController extends Controller
         $choices = $preferenceLogs->pluck('chosen_ai');
         $totalChoices = $choices->count();
 
+        // Preference-based quiz model performance (aligned with user poll choice)
+        $preferenceModelPerformance = [];
+        foreach (['gemini', 'together'] as $model) {
+            $aiPrefs = $preferenceLogs->where('chosen_ai', $model);
+            $prefsCount = $aiPrefs->count();
+            $passedPrefs = $aiPrefs->filter(function ($p) use ($quizPassThreshold) {
+                $score = is_numeric($p->performance_score) ? (float) $p->performance_score : null;
+                return $score !== null && $score >= $quizPassThreshold;
+            })->count();
+
+            $preferenceModelPerformance[$model] = [
+                'total_attempts' => $prefsCount,
+                'passed_attempts' => $passedPrefs,
+                'pass_rate' => $prefsCount > 0 ? round(($passedPrefs / $prefsCount) * 100, 2) : 0,
+                'avg_score' => $prefsCount > 0 ? round((float) $aiPrefs->avg('performance_score'), 2) : 0,
+                'avg_time_spent_seconds' => $prefsCount > 0 ? (int) round((float) $aiPrefs->avg('time_spent_seconds')) : 0,
+            ];
+        }
+
         return [
             'total_quiz_attempts' => $totalAttempts,
             'overall_pass_rate' => $overallPassRate,
             'model_performance' => $modelAnalysis,
+            // New: preference-based metrics to avoid confusion when polls disagree with attribution
+            'preference_model_performance' => $preferenceModelPerformance,
             'user_choice_breakdown' => [
                 'total_choices' => $totalChoices,
                 'gemini_preference_rate' => $totalChoices > 0 ? round(($choices->filter(fn($c) => $c === 'gemini')->count() / $totalChoices) * 100, 2) : 0,
