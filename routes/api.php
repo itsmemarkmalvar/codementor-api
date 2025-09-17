@@ -151,7 +151,8 @@ Route::prefix('practice')->group(function () {
     Route::middleware('auth:sanctum')->get('/problems/{id}', [PracticeController::class, 'getProblem']);
     // Protect solution submission
     Route::middleware('auth:sanctum')->post('/problems/{id}/solution', [PracticeController::class, 'submitSolution']);
-    Route::get('/problems/{id}/hint', [PracticeController::class, 'getHint']);
+    // Require auth for hints to avoid 500 from unauthorized access
+    Route::middleware('auth:sanctum')->get('/problems/{id}/hint', [PracticeController::class, 'getHint']);
     Route::get('/problems/{id}/resources', [PracticeController::class, 'getProblemResources']);
     Route::get('/problems/{id}/resources/suggestions', [PracticeController::class, 'getSuggestedResources']);
     Route::get('/all-data', [PracticeController::class, 'getAllPracticeData']);

@@ -507,6 +507,13 @@ class PracticeController extends Controller
                     'has_more_hints' => $hint['has_more_hints']
                 ]
             ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            // Preserve HTTP status codes from abort()/auth checks
+            Log::error('Error getting practice hint: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ], (int) $e->getStatusCode());
         } catch (\Exception $e) {
             Log::error('Error getting practice hint: ' . $e->getMessage());
             return response()->json([
