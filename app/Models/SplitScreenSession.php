@@ -87,7 +87,12 @@ class SplitScreenSession extends Model
      */
     public function incrementEngagement(int $points = 1): void
     {
-        $this->engagement_score += $points;
+        // Cap engagement at 100
+        $newScore = (int) $this->engagement_score + $points;
+        if ($newScore > 100) {
+            $newScore = 100;
+        }
+        $this->engagement_score = $newScore;
         $this->save();
     }
 
@@ -187,6 +192,8 @@ class SplitScreenSession extends Model
             'quiz_threshold' => 30,
             'practice_threshold' => 70,
             'current_score' => $this->engagement_score,
+            'is_capped' => $this->engagement_score >= 100,
+            'points_to_cap' => max(0, 100 - (int) $this->engagement_score),
             'quiz_unlocked' => $this->engagement_score >= 30,
             'practice_unlocked' => $this->engagement_score >= 70 && $this->quiz_triggered,
             'quiz_triggered' => $this->quiz_triggered,

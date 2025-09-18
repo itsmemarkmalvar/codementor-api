@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class SessionController extends Controller
 {
@@ -19,7 +20,8 @@ class SessionController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'topic_id' => 'nullable|exists:learning_topics,id',
-            'lesson_id' => 'nullable|exists:lesson_modules,id',
+            // IMPORTANT: session.lesson_id maps to lesson_plans.id across the app
+            'lesson_id' => 'nullable|exists:lesson_plans,id',
             'session_type' => 'required|in:comparison,single',
             'ai_models' => 'required|array',
             'ai_models.*' => 'in:gemini,together',
@@ -34,95 +36,109 @@ class SessionController extends Controller
 
         try {
             $userId = Auth::id();
-            // Reuse existing active split-screen session for the same lesson if present
-            if ($request->lesson_id) {
-                $existingActive = SplitScreenSession::where('user_id', $userId)
-                    ->where('lesson_id', $request->lesson_id)
-                    ->whereNull('ended_at')
-                    ->first();
-                if ($existingActive) {
-                    return response()->json([
-                        'status' => 'success',
-                        'data' => [
+
+            // CONCURRENCY SAFE: ensure only one active session per user+lesson via transaction + row lock
+            $result = DB::transaction(function () use ($request, $userId) {
+                // Lock any existing rows for this user+lesson to prevent races
+                if ($request->lesson_id) {
+                    SplitScreenSession::where('user_id', $userId)
+                        ->where('lesson_id', $request->lesson_id)
+                        ->lockForUpdate()
+                        ->get();
+
+                    // POLICY: Only one active session overall per user. End any other active sessions for different lessons.
+                    $others = SplitScreenSession::where('user_id', $userId)
+                        ->whereNull('ended_at')
+                        ->when($request->lesson_id, fn($q) => $q->where('lesson_id', '!=', $request->lesson_id))
+                        ->get();
+                    foreach ($others as $s) {
+                        $s->ended_at = now();
+                        $s->save();
+                    }
+
+                    // Re-check for active after acquiring lock
+                    $existingActive = SplitScreenSession::where('user_id', $userId)
+                        ->where('lesson_id', $request->lesson_id)
+                        ->whereNull('ended_at')
+                        ->first();
+                    if ($existingActive) {
+                        return [
                             'session_id' => $existingActive->id,
                             'preserved_session_id' => $existingActive->session_metadata['preserved_session_id'] ?? null,
                             'session_type' => $existingActive->session_type,
                             'ai_models' => $existingActive->ai_models_used,
                             'started_at' => $existingActive->started_at,
-                        ]
-                    ]);
-                }
+                        ];
+                    }
 
-                // No active session. Try to reactivate the most recent ended session for this lesson
-                $recentEnded = SplitScreenSession::where('user_id', $userId)
-                    ->where('lesson_id', $request->lesson_id)
-                    ->whereNotNull('ended_at')
-                    ->orderByDesc('ended_at')
-                    ->first();
-                if ($recentEnded) {
-                    $recentEnded->ended_at = null;
-                    // Do not reset engagement or flags on reactivation
-                    $recentEnded->save();
-                    return response()->json([
-                        'status' => 'success',
-                        'data' => [
+                    // Try to reactivate the most recent ended session for this lesson
+                    $recentEnded = SplitScreenSession::where('user_id', $userId)
+                        ->where('lesson_id', $request->lesson_id)
+                        ->whereNotNull('ended_at')
+                        ->orderByDesc('ended_at')
+                        ->first();
+                    if ($recentEnded) {
+                        $recentEnded->ended_at = null;
+                        $recentEnded->save();
+                        return [
                             'session_id' => $recentEnded->id,
                             'preserved_session_id' => $recentEnded->session_metadata['preserved_session_id'] ?? null,
                             'session_type' => $recentEnded->session_type,
                             'ai_models' => $recentEnded->ai_models_used,
                             'started_at' => $recentEnded->started_at,
-                        ]
-                    ]);
+                        ];
+                    }
                 }
-            }
 
-            // Create new preserved session (lesson-based) - only if none existed for this lesson
-            $sessionData = [
-                'user_id' => $userId,
-                'topic_id' => $request->topic_id,
-                'lesson_id' => $request->lesson_id,
-                'session_type' => $request->session_type,
-                'ai_models_used' => $request->ai_models
-            ];
-            
-            $preservedSession = \App\Models\PreservedSession::createSession($sessionData);
+                // Create new preserved session (lesson-based)
+                $sessionData = [
+                    'user_id' => $userId,
+                    'topic_id' => $request->topic_id,
+                    'lesson_id' => $request->lesson_id,
+                    'session_type' => $request->session_type,
+                    'ai_models_used' => $request->ai_models
+                ];
+                $preservedSession = \App\Models\PreservedSession::createSession($sessionData);
 
-            // Create new split-screen session (engagement-based) for TICA-E tracking
-            $splitScreenSession = SplitScreenSession::create([
-                'user_id' => $userId,
-                'topic_id' => $request->topic_id,
-                'lesson_id' => $request->lesson_id,
-                'session_type' => $request->session_type,
-                'ai_models_used' => $request->ai_models,
-                'started_at' => now(),
-                'total_messages' => 0,
-                'engagement_score' => 0,
-                'quiz_triggered' => false,
-                'practice_triggered' => false,
-                'session_metadata' => [
+                // Create new split-screen session (engagement-based) for TICA-E tracking
+                $splitScreenSession = SplitScreenSession::create([
+                    'user_id' => $userId,
+                    'topic_id' => $request->topic_id,
+                    'lesson_id' => $request->lesson_id,
+                    'session_type' => $request->session_type,
+                    'ai_models_used' => $request->ai_models,
+                    'started_at' => now(),
+                    'total_messages' => 0,
+                    'engagement_score' => 0,
+                    'quiz_triggered' => false,
+                    'practice_triggered' => false,
+                    'session_metadata' => [
+                        'preserved_session_id' => $preservedSession->session_identifier,
+                        'session_type' => $request->session_type
+                    ]
+                ]);
+
+                Log::info('Split-screen session created for TICA-E tracking', [
+                    'user_id' => $userId,
+                    'split_screen_session_id' => $splitScreenSession->id,
                     'preserved_session_id' => $preservedSession->session_identifier,
+                    'topic_id' => $request->topic_id,
+                    'lesson_id' => $request->lesson_id,
                     'session_type' => $request->session_type
-                ]
-            ]);
+                ]);
 
-            Log::info('Split-screen session created for TICA-E tracking', [
-                'user_id' => $userId,
-                'split_screen_session_id' => $splitScreenSession->id,
-                'preserved_session_id' => $preservedSession->session_identifier,
-                'topic_id' => $request->topic_id,
-                'lesson_id' => $request->lesson_id,
-                'session_type' => $request->session_type
-            ]);
-
-            return response()->json([
-                'status' => 'success',
-                'data' => [
-                    'session_id' => $splitScreenSession->id, // Return SplitScreenSession ID for engagement tracking
+                return [
+                    'session_id' => $splitScreenSession->id,
                     'preserved_session_id' => $preservedSession->session_identifier,
                     'session_type' => $request->session_type,
                     'ai_models' => $request->ai_models,
                     'started_at' => $splitScreenSession->started_at,
-                ]
+                ];
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $result
             ]);
         } catch (\Exception $e) {
             Log::error('Error starting split-screen session: ' . $e->getMessage());
