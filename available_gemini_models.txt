@@ -1,0 +1,19 @@
+Available Gemini Models (as of October 2025):
+=============================================
+
+✅ AVAILABLE MODELS:
+- gemini-2.5-flash
+- gemini-2.5-pro
+- gemini-2.0-flash
+- gemini-2.0-flash-001
+- gemini-2.0-flash-lite-001
+- gemini-2.0-flash-lite
+- gemini-2.5-flash-lite
+
+❌ NOT AVAILABLE (404 Error):
+- gemini-1.5-flash ← Your old model
+- gemini-1.5-pro
+- gemini-pro
+
+This is why you were getting fallback messages - the model literally doesn't exist anymore in Google's API.
+

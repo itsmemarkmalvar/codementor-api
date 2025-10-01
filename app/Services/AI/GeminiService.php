@@ -15,9 +15,10 @@ class GeminiService
     public function __construct()
     {
         $this->apiKey = env('GEMINI_API_KEY', '');
-        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1beta';
-        // Prefer a lighter model by default to stay within free-tier limits
-        $this->model = env('GEMINI_MODEL', 'gemini-1.5-flash');
+        $this->apiUrl = 'https://generativelanguage.googleapis.com/v1';
+        // Use Gemini 2.5 Flash - the latest fast model available in 2025
+        // Other options: gemini-2.5-pro (more capable), gemini-2.5-flash-lite (faster/cheaper)
+        $this->model = env('GEMINI_MODEL', 'gemini-2.5-flash');
     }
 
     /**
