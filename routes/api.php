@@ -30,23 +30,35 @@ use Illuminate\Support\Facades\Auth;
 |
 */
 
-// Handle CORS preflight OPTIONS requests
-Route::options('/{any}', function() {
-    return response()->json('OK', 200)
-        ->withHeaders([
-            'Access-Control-Allow-Origin' => 'http://localhost:3000',
-            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN',
-            'Access-Control-Allow-Credentials' => 'true',
-            'Access-Control-Max-Age' => '86400',
-        ]);
-})->where('any', '.*');
+// Test CORS route
+Route::get('/test-cors', function () {
+    return response()->json(['message' => 'CORS test successful']);
+});
 
-// Public routes
+// Public routes (CORS preflight handled by global HandleCors)
 Route::post('/register', [AuthController::class, 'register']);
+
+// Debug route to test JSON parsing
+Route::post('/debug-json', function (Request $request) {
+    return response()->json([
+        'content_type' => $request->header('Content-Type'),
+        'raw_input' => $request->getContent(),
+        'all_data' => $request->all(),
+        'json_data' => $request->json()->all(),
+        'input_name' => $request->input('name'),
+        'input_email' => $request->input('email'),
+        'is_json' => $request->isJson(),
+        'wants_json' => $request->wantsJson(),
+    ]);
+});
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
+// Test route
+Route::get('/test', function () {
+    return response()->json(['message' => 'API is working']);
+});
 
 // Health (public)
 Route::get('/health/piston', [HealthController::class, 'piston']);

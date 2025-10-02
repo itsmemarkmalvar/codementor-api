@@ -47,5 +47,8 @@ class DatabaseSeeder extends Seeder
 
         // Seed quizzes (easy/medium/hard) with questions
         $this->call(QuizSeeder::class);
+        
+        // Create admin user for testing and management
+        $this->call(AdminUserSeeder::class);
     }
 }

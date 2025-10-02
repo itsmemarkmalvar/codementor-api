@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
@@ -22,21 +23,34 @@ class AuthController extends Controller
      */
     public function register(Request $request)
     {
-        $request->validate([
+        // Handle all possible request formats
+        $data = $this->parseAllRequestFormats($request);
+
+        // Validate the data
+        $validator = Validator::make($data, [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
         ]);
 
-        \Log::info('Validation passed, creating user...');
-        
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+                'debug_info' => [
+                    'content_type' => $request->header('Content-Type'),
+                    'raw_content' => $request->getContent(),
+                    'all_data' => $request->all(),
+                    'parsed_data' => $data
+                ]
+            ], 422);
+        }
 
-        \Log::info('User created: ' . $user->id);
+        $user = User::create([
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'password' => Hash::make($data['password']),
+        ]);
         
         $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -44,13 +58,7 @@ class AuthController extends Controller
             'message' => 'User registered successfully',
             'user' => $user,
             'token' => $token
-        ], 201)
-        ->withHeaders([
-            'Access-Control-Allow-Origin' => 'http://localhost:3000',
-            'Access-Control-Allow-Credentials' => 'true',
-            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Origin, Content-Type, X-Auth-Token, Authorization, X-Requested-With, Accept',
-        ]);
+        ], 201);
     }
 
     /**
@@ -61,24 +69,41 @@ class AuthController extends Controller
      */
     public function login(Request $request)
     {
-        $request->validate([
+        // Handle all possible request formats
+        $data = $this->parseAllRequestFormats($request);
+
+        // Validate the data
+        $validator = Validator::make($data, [
             'email' => 'required|string|email',
             'password' => 'required|string',
         ]);
 
-        if (!Auth::attempt($request->only('email', 'password'))) {
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+                'debug_info' => [
+                    'content_type' => $request->header('Content-Type'),
+                    'raw_content' => $request->getContent(),
+                    'all_data' => $request->all(),
+                    'parsed_data' => $data
+                ]
+            ], 422);
+        }
+
+        if (!Auth::attempt(['email' => $data['email'], 'password' => $data['password']])) {
             return response()->json([
                 'message' => 'Invalid login credentials'
             ], 401)
             ->withHeaders([
-                'Access-Control-Allow-Origin' => 'http://localhost:3000',
+                'Access-Control-Allow-Origin' => env('CORS_ALLOWED_ORIGINS', 'https://codementor-java.com'),
                 'Access-Control-Allow-Credentials' => 'true',
                 'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
                 'Access-Control-Allow-Headers' => 'Origin, Content-Type, X-Auth-Token, Authorization, X-Requested-With, Accept',
             ]);
         }
 
-        $user = User::where('email', $request->email)->firstOrFail();
+        $user = User::where('email', $data['email'])->firstOrFail();
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
@@ -87,7 +112,7 @@ class AuthController extends Controller
             'token' => $token
         ])
         ->withHeaders([
-            'Access-Control-Allow-Origin' => 'http://localhost:3000',
+            'Access-Control-Allow-Origin' => env('CORS_ALLOWED_ORIGINS', 'https://codementor-java.com'),
             'Access-Control-Allow-Credentials' => 'true',
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
             'Access-Control-Allow-Headers' => 'Origin, Content-Type, X-Auth-Token, Authorization, X-Requested-With, Accept',
@@ -206,4 +231,49 @@ class AuthController extends Controller
             'token' => $token
         ]);
     }
+
+    /**
+     * Parse all possible request formats (JSON, Form Data, URLSearchParams, etc.)
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return array
+     */
+    private function parseAllRequestFormats(Request $request)
+    {
+        $data = [];
+        
+        // Method 1: Try JSON parsing
+        if ($request->header('Content-Type') === 'application/json' && $request->getContent()) {
+            $jsonData = json_decode($request->getContent(), true);
+            if ($jsonData && is_array($jsonData)) {
+                $data = $jsonData;
+            }
+        }
+        
+        // Method 2: Try form data (application/x-www-form-urlencoded)
+        if (empty($data) && $request->header('Content-Type') === 'application/x-www-form-urlencoded') {
+            $data = $request->all();
+        }
+        
+        // Method 3: Try multipart/form-data (FormData)
+        if (empty($data) && strpos($request->header('Content-Type'), 'multipart/form-data') !== false) {
+            $data = $request->all();
+        }
+        
+        // Method 4: Try Laravel's default parsing
+        if (empty($data)) {
+            $data = $request->all();
+        }
+        
+        // Method 5: Try raw content parsing as form data
+        if (empty($data) && $request->getContent()) {
+            parse_str($request->getContent(), $parsedData);
+            if (!empty($parsedData)) {
+                $data = $parsedData;
+            }
+        }
+        
+        return $data;
+    }
+
 } 
